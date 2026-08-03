@@ -1,0 +1,16 @@
+{
+  "name": "ersync-front-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "install:all": "npm --prefix apps/hospital-web ci && npm --prefix apps/super-admin-web ci",
+    "dev:hospital": "npm --prefix apps/hospital-web run dev -- --port 3000",
+    "dev:admin": "npm --prefix apps/super-admin-web run dev -- --port 3001",
+    "build": "npm run build:hospital && npm run build:admin",
+    "build:hospital": "npm --prefix apps/hospital-web run build",
+    "build:admin": "npm --prefix apps/super-admin-web run build",
+    "test": "npm run test:hospital && npm run test:admin",
+    "test:hospital": "npm --prefix apps/hospital-web run test",
+    "test:admin": "npm --prefix apps/super-admin-web run test"
+  }
+}
