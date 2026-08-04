@@ -9,6 +9,144 @@ export type Session = {
   loginId?: string;
 };
 
+export type OfferView = "ACTIVE" | "HISTORY";
+export type OfferStatus = "PENDING" | "ACCEPTED" | "REJECTED" | "NO_RESPONSE";
+export type RouteEstimateStatus = "CALCULATING" | "AVAILABLE" | "UNAVAILABLE";
+export type RejectionReason =
+  | "ER_GENERAL_BED_SHORTAGE"
+  | "ISOLATION_BED_SHORTAGE"
+  | "OPERATING_ROOM_SHORTAGE"
+  | "ICU_SHORTAGE"
+  | "SPECIALIST_UNAVAILABLE"
+  | "EQUIPMENT_UNAVAILABLE"
+  | "OTHER";
+
+export type PageResult<T> = {
+  items: T[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  serverNow: string;
+};
+
+export type HospitalOfferListItem = {
+  offerId: string;
+  transportRequestId: string;
+  dispatchAttemptNumber: number;
+  transportRequestStatus: string;
+  offerStatus: OfferStatus;
+  ageStatus: "EXACT" | "ESTIMATED" | "UNKNOWN";
+  ageYears: number | null;
+  sex: "MALE" | "FEMALE" | "UNKNOWN";
+  preKtasClassificationStatus: "COMPLETED" | "EMERGENCY_UNFINISHED";
+  preKtasLevel: number | null;
+  preKtasExceptionReason: string | null;
+  straightLineDistanceMeters: number;
+  routeEstimateStatus: RouteEstimateStatus;
+  routeDistanceMeters: number | null;
+  etaSeconds: number | null;
+  offeredAt: string;
+};
+
+export type VitalSignMeasurement = {
+  type:
+    | "BLOOD_PRESSURE"
+    | "PULSE"
+    | "RESPIRATORY_RATE"
+    | "TEMPERATURE"
+    | "SPO2";
+  state: "VALUE" | "MEASUREMENT_UNAVAILABLE" | "PATIENT_REFUSED";
+  primaryValue: number | null;
+  secondaryValue: number | null;
+  unavailableReason: string | null;
+  unavailableDetail: string | null;
+};
+
+export type HospitalOfferDetail = {
+  offerId: string;
+  transportRequestId: string;
+  dispatchAttemptNumber: number;
+  transportRequestStatus: string;
+  offerStatus: OfferStatus;
+  patient: {
+    ageStatus: "EXACT" | "ESTIMATED" | "UNKNOWN";
+    ageYears: number | null;
+    sex: "MALE" | "FEMALE" | "UNKNOWN";
+  };
+  incident: {
+    occurrenceType: string;
+    injuryMechanism: string | null;
+    injurySites: string[];
+    primarySymptom: string;
+    primarySymptomDetail: string | null;
+    secondarySymptoms: string[];
+    onsetTimeStatus: "EXACT" | "ESTIMATED" | "UNKNOWN";
+    onsetAt: string | null;
+  };
+  preKtas: {
+    classificationStatus: "COMPLETED" | "EMERGENCY_UNFINISHED";
+    level: number | null;
+    exceptionReason: string | null;
+    exceptionDetail: string | null;
+    assessedAt: string | null;
+    standardVersion: string;
+  };
+  consciousness: {
+    avpu: "A" | "V" | "P" | "U" | "UNASSESSABLE";
+    unassessableReason: string | null;
+    unassessableDetail: string | null;
+    observedAt: string;
+  };
+  vitalSigns: {
+    measuredAt: string;
+    measurements: VitalSignMeasurement[];
+  };
+  treatments: Array<{
+    type: string;
+    attemptResult: string | null;
+    performedAt: string | null;
+    method: string | null;
+    device: string | null;
+    flowRateLpm: number | null;
+    currentStatus: string | null;
+    medicationName: string | null;
+    dose: string | null;
+    route: string | null;
+    site: string | null;
+    detail: string | null;
+  }>;
+  requester: {
+    organizationName: string;
+    callbackContact: string;
+  };
+  route: {
+    straightLineDistanceMeters: number;
+    status: RouteEstimateStatus;
+    routeDistanceMeters: number | null;
+    etaSeconds: number | null;
+    calculatedAt: string | null;
+  };
+  timing: {
+    requestReceivedAt: string;
+    offeredAt: string;
+    lastClinicalUpdateAt: string;
+  };
+  rejectionReason: RejectionReason | null;
+  rejectionDetail: string | null;
+  respondedAt: string | null;
+  serverNow: string;
+};
+
+export type HospitalOfferDecision = {
+  offerId: string;
+  offerStatus: "ACCEPTED" | "REJECTED";
+  transportRequestId: string;
+  transportRequestStatus: string;
+  respondedAt: string;
+  idempotentReplay: boolean;
+};
+
 type ErrorBody = {
   code?: string;
   message?: string;
@@ -95,6 +233,35 @@ export const hospitalApi = {
       method: "PUT",
       body: JSON.stringify({ status }),
     }),
+  offers: (view: OfferView, page = 0, size = 20) =>
+    request<PageResult<HospitalOfferListItem>>(
+      `/api/ersync/hospitals/me/offers?view=${view}&page=${page}&size=${size}`,
+    ),
+  offerDetail: (offerId: string) =>
+    request<HospitalOfferDetail>(
+      `/api/ersync/hospitals/me/offers/${encodeURIComponent(offerId)}`,
+    ),
+  acceptOffer: (offerId: string, idempotencyKey: string) =>
+    request<HospitalOfferDecision>(
+      `/api/ersync/hospitals/me/offers/${encodeURIComponent(offerId)}/accept`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+      },
+    ),
+  rejectOffer: (
+    offerId: string,
+    payload: { reason: RejectionReason; detail: string | null },
+    idempotencyKey: string,
+  ) =>
+    request<HospitalOfferDecision>(
+      `/api/ersync/hospitals/me/offers/${encodeURIComponent(offerId)}/reject`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(payload),
+      },
+    ),
 };
 
 export function errorMessage(error: unknown) {

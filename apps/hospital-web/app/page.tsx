@@ -14,6 +14,7 @@ import {
   createHospitalSignupRequest,
   isValidHospitalContact,
 } from "./lib/hospital-signup-contract.js";
+import { HospitalOffers } from "./components/HospitalOffers";
 
 type AuthView = "login" | "signup";
 type HospitalView = "dashboard" | "account";
@@ -456,7 +457,7 @@ function HospitalApp({
       setError(nextError);
       if (
         nextError instanceof ApiError &&
-        ["AUTH_005", "USER_002", "AUTH_001"].includes(nextError.code)
+        ["AUTH_001", "AUTH_002", "AUTH_005", "USER_002"].includes(nextError.code)
       ) {
         onSessionExpired();
       }
@@ -508,27 +509,7 @@ function HospitalApp({
 
       {view === "dashboard" ? (
         <section className="dashboard-grid">
-          <div className="request-panel">
-            <div className="request-panel-head">
-              <div>
-                <span className="eyebrow">이송 요청</span>
-                <h1>새로운 요청을 기다리고 있어요</h1>
-                <p>
-                  병원 요청 조회·응답 API가 제공되면 이 영역에 환자 상세와
-                  수락·거절 기능이 연결됩니다.
-                </p>
-              </div>
-              <span className="count-pill">0건 대기</span>
-            </div>
-            <div className="empty-stage">
-              <div className="empty-symbol">ER</div>
-              <strong>현재 연결된 이송 요청이 없습니다</strong>
-              <span>
-                현재는 인증, 병원 가입 연락처 동의와 수신 상태 기능만 실제 서버에
-                연결되어 있습니다.
-              </span>
-            </div>
-          </div>
+          <HospitalOffers onSessionExpired={onSessionExpired} />
 
           <aside className="receiving-card">
             <span className="eyebrow">신규 요청 수신</span>
@@ -605,15 +586,17 @@ function HospitalApp({
           </div>
           <div className="info-card">
             <span className="eyebrow">연동 상태</span>
-            <h2>기능 1·기능 2 가입 계약 연결 완료</h2>
+            <h2>기능 1·2·3 병원 계약 연결 완료</h2>
             <ul className="check-list">
               <li>응급실 연락처와 필수 제공 동의가 포함된 병원 가입</li>
               <li>병원 로그인과 토큰 자동 교체</li>
               <li>인증된 병원의 수신 ON/OFF 변경</li>
+              <li>병원 제안 목록·상세와 수락·거절 응답</li>
+              <li>실제 도로 거리·ETA와 실시간 상태 갱신</li>
               <li>인증 만료·비활성 계정 자동 로그아웃</li>
             </ul>
             <p>
-              환자 요청, 병상, 진료과, 알림 기능은 해당 백엔드 문서가 전달될 때
+              병상, 진료과와 이후 알림 기능은 해당 백엔드 문서가 전달될 때
               순차적으로 연결됩니다.
             </p>
           </div>
