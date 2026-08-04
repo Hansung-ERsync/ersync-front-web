@@ -12,14 +12,52 @@ import {
   SESSION_COOKIE,
   setAuthCookies,
 } from "../../_lib/backend";
+import { hospitalBackendHeaders } from "../../_lib/request-headers.js";
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
 const publicRoutes = new Set(["POST auth/signups/hospital"]);
+const offerIdPattern =
+  "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
 function isAllowed(method: string, path: string) {
   if (publicRoutes.has(`${method} ${path}`)) return true;
-  return method === "PUT" && path === "hospitals/me/receiving-status";
+  if (method === "PUT" && path === "hospitals/me/receiving-status") return true;
+  if (method === "GET" && path === "hospitals/me/offers") return true;
+  if (
+    method === "GET" &&
+    new RegExp(`^hospitals/me/offers/${offerIdPattern}$`, "i").test(path)
+  ) {
+    return true;
+  }
+  return (
+    method === "POST" &&
+    new RegExp(`^hospitals/me/offers/${offerIdPattern}/(accept|reject)$`, "i").test(
+      path,
+    )
+  );
+}
+
+function authErrorResponse(status: number, data: Record<string, unknown>) {
+  const response = NextResponse.json(data, { status });
+  if (data.code === "AUTH_005" || data.code === "USER_002") {
+    clearAuthCookies(response);
+  }
+  return response;
+}
+
+function hospitalRoleError() {
+  const response = NextResponse.json(
+    {
+      code: "AUTH_003",
+      message: "병원 계정만 이 기능을 사용할 수 있습니다.",
+      fieldErrors: [],
+      traceId: null,
+    },
+    { status: 403 },
+  );
+  clearAuthCookies(response);
+  return response;
 }
 
 async function handler(request: NextRequest, context: RouteContext) {
@@ -36,33 +74,44 @@ async function handler(request: NextRequest, context: RouteContext) {
 
   const isPublic = publicRoutes.has(`${method} ${path}`);
   const cookieStore = await cookies();
-  const accessToken = cookieStore.get(ACCESS_COOKIE)?.value;
+  let accessToken = cookieStore.get(ACCESS_COOKIE)?.value;
   const refreshToken = cookieStore.get(REFRESH_COOKIE)?.value;
   const previousSession = decodeSession(cookieStore.get(SESSION_COOKIE)?.value);
   const body = method === "GET" ? undefined : await request.text();
   const query = request.nextUrl.search;
 
+  let rotatedAuth: AuthPayload | null = null;
+
+  if (!isPublic && !accessToken && refreshToken) {
+    const refreshed = await refreshAuth(refreshToken);
+    if (refreshed.status !== 200) {
+      return authErrorResponse(
+        refreshed.status,
+        refreshed.data as Record<string, unknown>,
+      );
+    }
+    rotatedAuth = refreshed.data as AuthPayload;
+    if (rotatedAuth.role !== "HOSPITAL_STAFF") return hospitalRoleError();
+    accessToken = rotatedAuth.accessToken;
+  }
+
   if (!isPublic && !accessToken) {
-    return NextResponse.json(
-      {
-        code: "AUTH_001",
-        message: "로그인이 필요합니다.",
-        fieldErrors: [],
-        traceId: null,
-      },
-      { status: 401 },
-    );
+    return authErrorResponse(401, {
+      code: "AUTH_001",
+      message: "로그인이 필요합니다.",
+      fieldErrors: [],
+      traceId: null,
+    });
   }
 
   const call = (token?: string) =>
     backendRequest<Record<string, unknown>>(`/api/v1/${path}${query}`, {
       method,
       body,
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      headers: hospitalBackendHeaders(request.headers, token),
     });
 
   let result = await call(accessToken);
-  let rotatedAuth: AuthPayload | null = null;
 
   if (
     !isPublic &&
@@ -74,6 +123,7 @@ async function handler(request: NextRequest, context: RouteContext) {
 
     if (refreshed.status === 200) {
       rotatedAuth = refreshed.data as AuthPayload;
+      if (rotatedAuth.role !== "HOSPITAL_STAFF") return hospitalRoleError();
       result = await call(rotatedAuth.accessToken);
     } else {
       result = refreshed as typeof result;

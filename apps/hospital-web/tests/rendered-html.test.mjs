@@ -52,3 +52,31 @@ test("does not expose paramedic assessment or transport APIs", async () => {
   assert.equal(transport.status, 404);
   assert.equal((await transport.json()).code, "COMMON_404");
 });
+
+test("exposes hospital offer and realtime routes behind authentication", async () => {
+  const offers = await requestApp(
+    "/api/ersync/hospitals/me/offers?view=ACTIVE&page=0&size=20",
+    { headers: { accept: "application/json" } },
+  );
+  assert.equal(offers.status, 401);
+  assert.equal((await offers.json()).code, "AUTH_001");
+
+  const accept = await requestApp(
+    "/api/ersync/hospitals/me/offers/00112233-4455-6677-8899-aabbccddeeff/accept",
+    {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "Idempotency-Key": "hospital-accept:test-key",
+      },
+    },
+  );
+  assert.equal(accept.status, 401);
+  assert.equal((await accept.json()).code, "AUTH_001");
+
+  const realtime = await requestApp("/api/realtime/events", {
+    headers: { accept: "text/event-stream" },
+  });
+  assert.equal(realtime.status, 401);
+  assert.equal((await realtime.json()).code, "AUTH_001");
+});
