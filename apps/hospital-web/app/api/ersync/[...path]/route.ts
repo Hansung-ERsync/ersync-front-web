@@ -32,9 +32,10 @@ function isAllowed(method: string, path: string) {
   }
   return (
     method === "POST" &&
-    new RegExp(`^hospitals/me/offers/${offerIdPattern}/(accept|reject)$`, "i").test(
-      path,
-    )
+    new RegExp(
+      `^hospitals/me/offers/${offerIdPattern}/(accept|reject|withdraw-acceptance)$`,
+      "i",
+    ).test(path)
   );
 }
 
