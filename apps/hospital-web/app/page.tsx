@@ -8,28 +8,20 @@ import {
   Session,
   sessionApi,
 } from "./lib/api";
+import {
+  CONTACT_SHARING_CONSENT_VERSION,
+  HOSPITAL_CONTACT_PATTERN_SOURCE,
+  createHospitalSignupRequest,
+  isValidHospitalContact,
+} from "./lib/hospital-signup-contract.js";
 
 type AuthView = "login" | "signup";
 type HospitalView = "dashboard" | "account";
 
-function formatPhoneNumber(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 11);
-
-  if (digits.startsWith("02")) {
-    if (digits.length <= 2) return digits;
-    if (digits.length <= 5) return `${digits.slice(0, 2)}-${digits.slice(2)}`;
-    if (digits.length <= 9) {
-      return `${digits.slice(0, 2)}-${digits.slice(2, -4)}-${digits.slice(-4)}`;
-    }
-    return `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6)}`;
-  }
-
-  if (digits.length <= 3) return digits;
-  if (digits.length <= 7) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
-  if (digits.length <= 10) {
-    return `${digits.slice(0, 3)}-${digits.slice(3, -4)}-${digits.slice(-4)}`;
-  }
-  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+function isCoordinateInRange(value: string, min: number, max: number) {
+  if (!value.trim()) return false;
+  const coordinate = Number(value);
+  return Number.isFinite(coordinate) && coordinate >= min && coordinate <= max;
 }
 
 function ErrorNotice({ error }: { error: unknown }) {
@@ -202,22 +194,44 @@ function HospitalSignup({
     longitude: "",
     contact: "",
   });
+  const [contactSharingConsentAccepted, setContactSharingConsentAccepted] =
+    useState(false);
 
   const update = (key: keyof typeof form, value: string) =>
     setForm((current) => ({ ...current, [key]: value }));
 
+  const canSubmit =
+    form.invitationCode.trim().length > 0 &&
+    form.organizationName.trim().length > 0 &&
+    form.organizationName.trim().length <= 100 &&
+    /^[a-z0-9]{4,30}$/.test(form.loginId.trim()) &&
+    form.password.length >= 8 &&
+    form.password.length <= 64 &&
+    form.address.trim().length > 0 &&
+    form.address.trim().length <= 255 &&
+    isCoordinateInRange(form.latitude, -90, 90) &&
+    isCoordinateInRange(form.longitude, -180, 180) &&
+    isValidHospitalContact(form.contact) &&
+    contactSharingConsentAccepted;
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    void onSubmit({
-      invitationCode: form.invitationCode.trim(),
-      organizationName: form.organizationName.trim(),
-      loginId: form.loginId.trim().toLowerCase(),
-      password: form.password,
-      address: form.address.trim(),
-      latitude: Number(form.latitude),
-      longitude: Number(form.longitude),
-      contact: form.contact.trim(),
-    });
+    if (!canSubmit) return;
+    void onSubmit(
+      createHospitalSignupRequest(
+        {
+          invitationCode: form.invitationCode.trim(),
+          organizationName: form.organizationName.trim(),
+          loginId: form.loginId.trim().toLowerCase(),
+          password: form.password,
+          address: form.address.trim(),
+          latitude: Number(form.latitude),
+          longitude: Number(form.longitude),
+          contact: form.contact,
+        },
+        contactSharingConsentAccepted,
+      ),
+    );
   };
 
   return (
@@ -324,23 +338,67 @@ function HospitalSignup({
           </span>
         </div>
         <label className="field-span-2">
-          <span>대표 연락처</span>
+          <span>응급실 연락처</span>
           <input
             autoComplete="tel"
             inputMode="tel"
-            maxLength={13}
+            maxLength={30}
+            pattern={HOSPITAL_CONTACT_PATTERN_SOURCE}
             placeholder="02-1234-5678"
             required
+            title="숫자 또는 +로 시작하고, 이후에는 숫자와 하이픈만 7~29자 입력해 주세요."
             value={form.contact}
-            onChange={(event) => update("contact", formatPhoneNumber(event.target.value))}
+            onChange={(event) => update("contact", event.target.value)}
           />
-          <small className="field-hint">숫자만 입력하면 하이픈이 자동으로 추가됩니다.</small>
+          <small className="field-hint">
+            숫자 또는 +로 시작해 숫자와 하이픈만 입력해 주세요. 예: 02-1234-5678
+          </small>
         </label>
+        <section
+          aria-labelledby="contact-sharing-consent-title"
+          className="consent-panel field-span-2"
+        >
+          <div className="consent-panel-head">
+            <div>
+              <span className="consent-kicker">필수 동의</span>
+              <h2 id="contact-sharing-consent-title">응급실 연락처 수집·제공</h2>
+            </div>
+            <code>{CONTACT_SHARING_CONSENT_VERSION}</code>
+          </div>
+          <p>
+            ERSync는 병원 응급실 연락처를 수집하고, 이송 요청과 관련된 구급대원이
+            병원에 연락할 수 있도록 해당 연락처를 제공합니다.
+          </p>
+          <p className="consent-dev-note">
+            현재 문구는 개발 서버 연동 검증용이며 실제 운영 전 법적 검토를 거친
+            문구와 새 버전으로 함께 변경됩니다.
+          </p>
+          <label className="consent-check">
+            <input
+              checked={contactSharingConsentAccepted}
+              onChange={(event) =>
+                setContactSharingConsentAccepted(event.target.checked)
+              }
+              required
+              type="checkbox"
+            />
+            <span>위 연락처 수집 및 구급대원 제공에 동의합니다. (필수)</span>
+          </label>
+        </section>
+        {error instanceof ApiError && error.code === "COMMON_001" ? (
+          <p className="validation-help field-span-2" role="status">
+            입력 항목과 연락처 형식, 동의 체크 및 문구 버전을 다시 확인해 주세요.
+          </p>
+        ) : null}
         <div className="form-actions field-span-2">
           <button className="button button-muted" type="button" onClick={onBack}>
             취소
           </button>
-          <button className="button button-primary" disabled={busy}>
+          <button
+            className="button button-primary"
+            disabled={busy || !canSubmit}
+            type="submit"
+          >
             {busy ? "계정 생성 중…" : "병원 계정 만들기"}
           </button>
         </div>
@@ -371,12 +429,17 @@ function HospitalApp({
       () => setClock(new Date().toLocaleTimeString("ko-KR", { hour12: false })),
       1000,
     );
-    setClock(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
     const saved = window.localStorage.getItem(
       `ersync-receiving-${session.accountId}`,
     );
-    if (saved === "ON" || saved === "OFF") setReceiving(saved);
-    return () => window.clearInterval(timer);
+    const restoreTimer = window.setTimeout(() => {
+      setClock(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
+      if (saved === "ON" || saved === "OFF") setReceiving(saved);
+    }, 0);
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(restoreTimer);
+    };
   }, [session.accountId]);
 
   const setStatus = async (status: "ON" | "OFF") => {
@@ -451,8 +514,8 @@ function HospitalApp({
                 <span className="eyebrow">이송 요청</span>
                 <h1>새로운 요청을 기다리고 있어요</h1>
                 <p>
-                  이송 요청 API가 전달되면 이 영역에 환자 상세와 수락·거절 기능이
-                  연결됩니다.
+                  병원 요청 조회·응답 API가 제공되면 이 영역에 환자 상세와
+                  수락·거절 기능이 연결됩니다.
                 </p>
               </div>
               <span className="count-pill">0건 대기</span>
@@ -461,8 +524,8 @@ function HospitalApp({
               <div className="empty-symbol">ER</div>
               <strong>현재 연결된 이송 요청이 없습니다</strong>
               <span>
-                이번 단계에서는 인증과 병원 수신 상태 기능만 실제 서버에 연결되어
-                있습니다.
+                현재는 인증, 병원 가입 연락처 동의와 수신 상태 기능만 실제 서버에
+                연결되어 있습니다.
               </span>
             </div>
           </div>
@@ -542,8 +605,9 @@ function HospitalApp({
           </div>
           <div className="info-card">
             <span className="eyebrow">연동 상태</span>
-            <h2>기능 1 연결 완료</h2>
+            <h2>기능 1·기능 2 가입 계약 연결 완료</h2>
             <ul className="check-list">
+              <li>응급실 연락처와 필수 제공 동의가 포함된 병원 가입</li>
               <li>병원 로그인과 토큰 자동 교체</li>
               <li>인증된 병원의 수신 ON/OFF 변경</li>
               <li>인증 만료·비활성 계정 자동 로그아웃</li>

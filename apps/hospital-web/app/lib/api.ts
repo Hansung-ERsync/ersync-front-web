@@ -71,6 +71,8 @@ export const hospitalApi = {
     latitude: number;
     longitude: number;
     contact: string;
+    contactSharingConsentAccepted: true;
+    contactSharingConsentVersion: "CONTACT_SHARING_DEV_1.0";
   }) =>
     request<{
       accountId: string;
@@ -98,4 +100,3 @@ export const hospitalApi = {
 export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
 }
-
