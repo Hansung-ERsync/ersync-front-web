@@ -10,13 +10,24 @@ export type Session = {
 };
 
 export type OfferView = "ACTIVE" | "HISTORY";
-export type OfferStatus = "PENDING" | "ACCEPTED" | "REJECTED" | "NO_RESPONSE";
+export type OfferStatus =
+  | "PENDING"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "NO_RESPONSE"
+  | "ACCEPTANCE_WITHDRAWN";
 export type RouteEstimateStatus = "CALCULATING" | "AVAILABLE" | "UNAVAILABLE";
 export type RejectionReason =
   | "ER_GENERAL_BED_SHORTAGE"
   | "ISOLATION_BED_SHORTAGE"
   | "OPERATING_ROOM_SHORTAGE"
   | "ICU_SHORTAGE"
+  | "SPECIALIST_UNAVAILABLE"
+  | "EQUIPMENT_UNAVAILABLE"
+  | "OTHER";
+export type WithdrawalReason =
+  | "BED_SHORTAGE"
+  | "OPERATING_ROOM_SHORTAGE"
   | "SPECIALIST_UNAVAILABLE"
   | "EQUIPMENT_UNAVAILABLE"
   | "OTHER";
@@ -33,20 +44,29 @@ export type PageResult<T> = {
 export type HospitalOfferListItem = {
   offerId: string;
   transportRequestId: string;
-  dispatchAttemptNumber: number;
+  dispatchAttemptNumber: number | null;
   transportRequestStatus: string;
   offerStatus: OfferStatus;
-  ageStatus: "EXACT" | "ESTIMATED" | "UNKNOWN";
+  currentDestination: boolean;
+  canWithdraw: boolean;
+  ageStatus: "EXACT" | "ESTIMATED" | "UNKNOWN" | null;
   ageYears: number | null;
-  sex: "MALE" | "FEMALE" | "UNKNOWN";
-  preKtasClassificationStatus: "COMPLETED" | "EMERGENCY_UNFINISHED";
+  sex: "MALE" | "FEMALE" | "UNKNOWN" | null;
+  preKtasClassificationStatus:
+    | "COMPLETED"
+    | "EMERGENCY_UNFINISHED"
+    | null;
   preKtasLevel: number | null;
   preKtasExceptionReason: string | null;
-  straightLineDistanceMeters: number;
-  routeEstimateStatus: RouteEstimateStatus;
+  straightLineDistanceMeters: number | null;
+  routeEstimateStatus: RouteEstimateStatus | null;
   routeDistanceMeters: number | null;
   etaSeconds: number | null;
-  offeredAt: string;
+  offeredAt: string | null;
+  respondedAt: string | null;
+  withdrawalReason: WithdrawalReason | null;
+  withdrawalDetail: string | null;
+  withdrawnAt: string | null;
 };
 
 export type VitalSignMeasurement = {
@@ -69,6 +89,8 @@ export type HospitalOfferDetail = {
   dispatchAttemptNumber: number;
   transportRequestStatus: string;
   offerStatus: OfferStatus;
+  currentDestination: boolean;
+  canWithdraw: boolean;
   patient: {
     ageStatus: "EXACT" | "ESTIMATED" | "UNKNOWN";
     ageYears: number | null;
@@ -134,6 +156,9 @@ export type HospitalOfferDetail = {
   };
   rejectionReason: RejectionReason | null;
   rejectionDetail: string | null;
+  withdrawalReason: WithdrawalReason | null;
+  withdrawalDetail: string | null;
+  withdrawnAt: string | null;
   respondedAt: string | null;
   serverNow: string;
 };
@@ -144,6 +169,19 @@ export type HospitalOfferDecision = {
   transportRequestId: string;
   transportRequestStatus: string;
   respondedAt: string;
+  idempotentReplay: boolean;
+};
+
+export type HospitalAcceptanceWithdrawal = {
+  offerId: string;
+  offerStatus: "ACCEPTANCE_WITHDRAWN";
+  transportRequestId: string;
+  transportRequestStatus: string;
+  currentDestinationOfferId: string | null;
+  reason: WithdrawalReason;
+  detail: string | null;
+  withdrawnAt: string;
+  searchRestarted: boolean;
   idempotentReplay: boolean;
 };
 
@@ -256,6 +294,19 @@ export const hospitalApi = {
   ) =>
     request<HospitalOfferDecision>(
       `/api/ersync/hospitals/me/offers/${encodeURIComponent(offerId)}/reject`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(payload),
+      },
+    ),
+  withdrawAcceptance: (
+    offerId: string,
+    payload: { reason: WithdrawalReason; detail: string | null },
+    idempotencyKey: string,
+  ) =>
+    request<HospitalAcceptanceWithdrawal>(
+      `/api/ersync/hospitals/me/offers/${encodeURIComponent(offerId)}/withdraw-acceptance`,
       {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },

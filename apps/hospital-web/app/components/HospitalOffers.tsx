@@ -19,10 +19,15 @@ import {
   RejectionReason,
   sessionApi,
   VitalSignMeasurement,
+  WithdrawalReason,
 } from "../lib/api";
 import {
   clearOfferCommand,
+  createWithdrawalPayload,
   getOrCreateOfferCommand,
+  isMinimalHospitalOffer,
+  shouldRefreshBothOfferLists,
+  shouldRefreshSelectedOffer,
 } from "../lib/hospital-offer-contract.js";
 
 type StreamState = "CONNECTING" | "CONNECTED" | "RECONNECTING";
@@ -35,11 +40,14 @@ type RealtimeUpdate = {
   occurredAt: string;
 };
 
+type DecisionAction = "accept" | "reject" | "withdraw";
+
 const offerStatusLabel: Record<OfferStatus, string> = {
   PENDING: "응답 대기",
   ACCEPTED: "수락",
   REJECTED: "거절",
   NO_RESPONSE: "무응답 종료",
+  ACCEPTANCE_WITHDRAWN: "수락 철회",
 };
 
 const rejectionReasonLabel: Record<RejectionReason, string> = {
@@ -47,6 +55,14 @@ const rejectionReasonLabel: Record<RejectionReason, string> = {
   ISOLATION_BED_SHORTAGE: "격리 병상 부족",
   OPERATING_ROOM_SHORTAGE: "수술실 부족",
   ICU_SHORTAGE: "중환자실 부족",
+  SPECIALIST_UNAVAILABLE: "전문의 부재",
+  EQUIPMENT_UNAVAILABLE: "장비 사용 불가",
+  OTHER: "기타",
+};
+
+const withdrawalReasonLabel: Record<WithdrawalReason, string> = {
+  BED_SHORTAGE: "병상 부족",
+  OPERATING_ROOM_SHORTAGE: "수술실 부족",
   SPECIALIST_UNAVAILABLE: "전문의 부재",
   EQUIPMENT_UNAVAILABLE: "장비 사용 불가",
   OTHER: "기타",
@@ -161,7 +177,10 @@ function formatEta(seconds: number | null | undefined) {
   return `약 ${minutes}분`;
 }
 
-function patientSummary(offer: Pick<HospitalOfferListItem, "ageStatus" | "ageYears" | "sex">) {
+function patientSummary(
+  offer: Pick<HospitalOfferListItem, "ageStatus" | "ageYears" | "sex">,
+) {
+  if (!offer.ageStatus || !offer.sex) return "임상정보 비공개";
   const age =
     offer.ageStatus === "UNKNOWN" || offer.ageYears == null
       ? "나이 미상"
@@ -170,12 +189,14 @@ function patientSummary(offer: Pick<HospitalOfferListItem, "ageStatus" | "ageYea
 }
 
 function triageSummary(offer: HospitalOfferListItem) {
+  if (!offer.preKtasClassificationStatus) return "최소 응답 이력";
   return offer.preKtasClassificationStatus === "COMPLETED"
     ? `Pre-KTAS ${offer.preKtasLevel ?? "-"}`
     : `긴급 미완료 · ${label(offer.preKtasExceptionReason)}`;
 }
 
 function routeSummary(offer: HospitalOfferListItem) {
+  if (!offer.routeEstimateStatus) return "거리·ETA 비공개";
   if (offer.routeEstimateStatus === "CALCULATING") return "도로 거리·ETA 계산 중";
   if (offer.routeEstimateStatus === "UNAVAILABLE") return "경로 계산 실패";
   return `${formatDistance(offer.routeDistanceMeters)} · ${formatEta(offer.etaSeconds)}`;
@@ -206,27 +227,62 @@ function OfferError({ error }: { error: unknown }) {
 
 function OfferCard({
   offer,
+  view,
   onSelect,
 }: {
   offer: HospitalOfferListItem;
+  view: OfferView;
   onSelect: () => void;
 }) {
+  const restricted = isMinimalHospitalOffer(view, offer.offerStatus);
+
   return (
     <button className="offer-card" onClick={onSelect} type="button">
-      <span className={`offer-status offer-status-${offer.offerStatus.toLowerCase()}`}>
-        {offerStatusLabel[offer.offerStatus]}
-      </span>
+      <div className="offer-card-statuses">
+        <span className={`offer-status offer-status-${offer.offerStatus.toLowerCase()}`}>
+          {offerStatusLabel[offer.offerStatus]}
+        </span>
+        {offer.currentDestination ? (
+          <span className="destination-badge">현재 목적지</span>
+        ) : null}
+      </div>
       <div className="offer-card-main">
-        <strong>{patientSummary(offer)}</strong>
-        <span>{triageSummary(offer)}</span>
+        <strong>
+          {restricted
+            ? offer.offerStatus === "ACCEPTANCE_WITHDRAWN"
+              ? "수락 철회 이력"
+              : "비목적지 수락 이력"
+            : patientSummary(offer)}
+        </strong>
+        <span>
+          {restricted
+            ? "환자 임상정보와 회신 정보가 제한됩니다."
+            : triageSummary(offer)}
+        </span>
       </div>
       <div className="offer-card-route">
-        <strong>{routeSummary(offer)}</strong>
-        <span>직선 {formatDistance(offer.straightLineDistanceMeters)}</span>
+        <strong>{restricted ? "최소 응답 이력" : routeSummary(offer)}</strong>
+        <span>
+          {restricted
+            ? offer.canWithdraw
+              ? "수락 철회 가능"
+              : "임상·연락처·거리 비공개"
+            : `직선 ${formatDistance(offer.straightLineDistanceMeters)}`}
+        </span>
       </div>
       <div className="offer-card-meta">
-        <span>제안 {formatDate(offer.offeredAt)}</span>
-        <span>탐색 {offer.dispatchAttemptNumber}차</span>
+        <span>
+          {offer.offeredAt
+            ? `제안 ${formatDate(offer.offeredAt)}`
+            : `응답 ${formatDate(offer.respondedAt)}`}
+        </span>
+        <span>
+          {offer.dispatchAttemptNumber != null
+            ? `탐색 ${offer.dispatchAttemptNumber}차`
+            : offer.withdrawnAt
+              ? `철회 ${formatDate(offer.withdrawnAt)}`
+              : "최소 이력"}
+        </span>
       </div>
       <span className="offer-card-arrow" aria-hidden="true">→</span>
     </button>
@@ -284,6 +340,223 @@ function TreatmentDetails({ treatment }: { treatment: HospitalOfferDetail["treat
   );
 }
 
+function WithdrawalForm({
+  decisionBusy,
+  reason,
+  detail,
+  onCancel,
+  onReason,
+  onDetail,
+  onSubmit,
+}: {
+  decisionBusy: DecisionAction | null;
+  reason: WithdrawalReason | "";
+  detail: string;
+  onCancel: () => void;
+  onReason: (reason: WithdrawalReason | "") => void;
+  onDetail: (detail: string) => void;
+  onSubmit: (event: FormEvent) => void;
+}) {
+  return (
+    <form className="reject-form withdrawal-form" onSubmit={onSubmit}>
+      <div className="detail-section-title">
+        <h3>수락 철회 사유</h3>
+      </div>
+      <p className="withdrawal-warning">
+        현재 목적지 병원이 철회하면 목적지가 해제되고 병원 탐색이 다시 시작될 수
+        있습니다.
+      </p>
+      <label>
+        <span>사유</span>
+        <select
+          onChange={(event) =>
+            onReason(event.target.value as WithdrawalReason | "")
+          }
+          required
+          value={reason}
+        >
+          <option value="">선택해 주세요</option>
+          {(Object.keys(withdrawalReasonLabel) as WithdrawalReason[]).map(
+            (withdrawalReason) => (
+              <option key={withdrawalReason} value={withdrawalReason}>
+                {withdrawalReasonLabel[withdrawalReason]}
+              </option>
+            ),
+          )}
+        </select>
+      </label>
+      {reason === "OTHER" ? (
+        <label>
+          <span>기타 상세 사유</span>
+          <textarea
+            maxLength={200}
+            onChange={(event) => onDetail(event.target.value)}
+            placeholder="공백이 아닌 상세 사유를 입력해 주세요."
+            required
+            value={detail}
+          />
+          <small>{detail.length}/200</small>
+        </label>
+      ) : null}
+      <div className="decision-actions">
+        <button
+          className="button button-muted"
+          disabled={decisionBusy !== null}
+          onClick={onCancel}
+          type="button"
+        >
+          취소
+        </button>
+        <button
+          className="button button-danger"
+          disabled={
+            decisionBusy !== null ||
+            !reason ||
+            (reason === "OTHER" && !detail.trim())
+          }
+          type="submit"
+        >
+          {decisionBusy === "withdraw" ? "철회 처리 중…" : "수락 철회 확정"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function MinimalHistoryModal({
+  offer,
+  decisionBusy,
+  decisionError,
+  decisionNotice,
+  showWithdrawal,
+  withdrawalReason,
+  withdrawalDetail,
+  onClose,
+  onShowWithdrawal,
+  onCancelWithdrawal,
+  onWithdrawalReason,
+  onWithdrawalDetail,
+  onWithdraw,
+}: {
+  offer: HospitalOfferListItem;
+  decisionBusy: DecisionAction | null;
+  decisionError: unknown;
+  decisionNotice: string | null;
+  showWithdrawal: boolean;
+  withdrawalReason: WithdrawalReason | "";
+  withdrawalDetail: string;
+  onClose: () => void;
+  onShowWithdrawal: () => void;
+  onCancelWithdrawal: () => void;
+  onWithdrawalReason: (reason: WithdrawalReason | "") => void;
+  onWithdrawalDetail: (detail: string) => void;
+  onWithdraw: (event: FormEvent) => void;
+}) {
+  return (
+    <div className="offer-modal-backdrop" onMouseDown={onClose}>
+      <section
+        aria-labelledby="minimal-history-title"
+        aria-modal="true"
+        className="offer-modal offer-modal-compact"
+        onMouseDown={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <header className="offer-modal-header">
+          <div>
+            <span className="eyebrow">병원 응답 최소 이력</span>
+            <h2 id="minimal-history-title">
+              {offer.offerStatus === "ACCEPTANCE_WITHDRAWN"
+                ? "수락 철회 이력"
+                : "비목적지 수락 이력"}
+            </h2>
+          </div>
+          <button
+            aria-label="이력 닫기"
+            className="modal-close"
+            onClick={onClose}
+            type="button"
+          >
+            ×
+          </button>
+        </header>
+        <div className="offer-detail-body">
+          <div className="minimal-history-summary">
+            <span className={`offer-status offer-status-${offer.offerStatus.toLowerCase()}`}>
+              {offerStatusLabel[offer.offerStatus]}
+            </span>
+            <dl>
+              <div>
+                <dt>요청 상태</dt>
+                <dd>{label(offer.transportRequestStatus)}</dd>
+              </div>
+              <div>
+                <dt>응답 시각</dt>
+                <dd>{formatDate(offer.respondedAt)}</dd>
+              </div>
+              {offer.withdrawnAt ? (
+                <div>
+                  <dt>철회 시각</dt>
+                  <dd>{formatDate(offer.withdrawnAt)}</dd>
+                </div>
+              ) : null}
+            </dl>
+          </div>
+
+          <div className="privacy-restriction-card">
+            <strong>목적지 병원이 아닌 조직에는 최소 이력만 제공됩니다.</strong>
+            <span>
+              환자 임상정보, 구급대원 연락처, 거리·ETA와 정확한 위치는 조회하지
+              않습니다.
+            </span>
+          </div>
+
+          {offer.withdrawalReason ? (
+            <section className="detail-section rejection-result">
+              <div className="detail-section-title">
+                <h3>수락 철회 사유</h3>
+              </div>
+              <strong>{withdrawalReasonLabel[offer.withdrawalReason]}</strong>
+              {offer.withdrawalDetail ? <p>{offer.withdrawalDetail}</p> : null}
+            </section>
+          ) : null}
+
+          {decisionNotice ? (
+            <div className="decision-notice" role="status">
+              {decisionNotice}
+            </div>
+          ) : null}
+          <OfferError error={decisionError} />
+
+          {offer.canWithdraw ? (
+            showWithdrawal ? (
+              <WithdrawalForm
+                decisionBusy={decisionBusy}
+                detail={withdrawalDetail}
+                onCancel={onCancelWithdrawal}
+                onDetail={onWithdrawalDetail}
+                onReason={onWithdrawalReason}
+                onSubmit={onWithdraw}
+                reason={withdrawalReason}
+              />
+            ) : (
+              <div className="decision-actions decision-actions-primary">
+                <button
+                  className="button button-danger"
+                  disabled={decisionBusy !== null}
+                  onClick={onShowWithdrawal}
+                  type="button"
+                >
+                  수락 철회
+                </button>
+              </div>
+            )
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function OfferDetailModal({
   detail,
   loading,
@@ -292,8 +565,11 @@ function OfferDetailModal({
   decisionError,
   decisionNotice,
   showReject,
+  showWithdrawal,
   rejectReason,
   rejectDetail,
+  withdrawalReason,
+  withdrawalDetail,
   onClose,
   onAccept,
   onShowReject,
@@ -301,16 +577,24 @@ function OfferDetailModal({
   onRejectReason,
   onRejectDetail,
   onReject,
+  onShowWithdrawal,
+  onCancelWithdrawal,
+  onWithdrawalReason,
+  onWithdrawalDetail,
+  onWithdraw,
 }: {
   detail: HospitalOfferDetail | null;
   loading: boolean;
   error: unknown;
-  decisionBusy: "accept" | "reject" | null;
+  decisionBusy: DecisionAction | null;
   decisionError: unknown;
   decisionNotice: string | null;
   showReject: boolean;
+  showWithdrawal: boolean;
   rejectReason: RejectionReason | "";
   rejectDetail: string;
+  withdrawalReason: WithdrawalReason | "";
+  withdrawalDetail: string;
   onClose: () => void;
   onAccept: () => void;
   onShowReject: () => void;
@@ -318,6 +602,11 @@ function OfferDetailModal({
   onRejectReason: (reason: RejectionReason | "") => void;
   onRejectDetail: (detail: string) => void;
   onReject: (event: FormEvent) => void;
+  onShowWithdrawal: () => void;
+  onCancelWithdrawal: () => void;
+  onWithdrawalReason: (reason: WithdrawalReason | "") => void;
+  onWithdrawalDetail: (detail: string) => void;
+  onWithdraw: (event: FormEvent) => void;
 }) {
   return (
     <div className="offer-modal-backdrop" onMouseDown={onClose}>
@@ -346,9 +635,14 @@ function OfferDetailModal({
         {detail ? (
           <div className="offer-detail-body">
             <div className="offer-detail-summary">
-              <span className={`offer-status offer-status-${detail.offerStatus.toLowerCase()}`}>
-                {offerStatusLabel[detail.offerStatus]}
-              </span>
+              <div className="offer-detail-statuses">
+                <span className={`offer-status offer-status-${detail.offerStatus.toLowerCase()}`}>
+                  {offerStatusLabel[detail.offerStatus]}
+                </span>
+                {detail.currentDestination ? (
+                  <span className="destination-badge">현재 목적지</span>
+                ) : null}
+              </div>
               <div>
                 <small>Pre-KTAS</small>
                 <strong>
@@ -451,10 +745,44 @@ function OfferDetailModal({
               </section>
             ) : null}
 
+            {detail.withdrawalReason ? (
+              <section className="detail-section rejection-result">
+                <div className="detail-section-title">
+                  <h3>수락 철회 사유</h3>
+                </div>
+                <strong>{withdrawalReasonLabel[detail.withdrawalReason]}</strong>
+                {detail.withdrawalDetail ? <p>{detail.withdrawalDetail}</p> : null}
+                <time>철회 {formatDate(detail.withdrawnAt)}</time>
+              </section>
+            ) : null}
+
             {decisionNotice ? <div className="decision-notice" role="status">{decisionNotice}</div> : null}
             <OfferError error={decisionError} />
 
-            {detail.offerStatus === "PENDING" ? (
+            {detail.canWithdraw ? (
+              showWithdrawal ? (
+                <WithdrawalForm
+                  decisionBusy={decisionBusy}
+                  detail={withdrawalDetail}
+                  onCancel={onCancelWithdrawal}
+                  onDetail={onWithdrawalDetail}
+                  onReason={onWithdrawalReason}
+                  onSubmit={onWithdraw}
+                  reason={withdrawalReason}
+                />
+              ) : (
+                <div className="decision-actions decision-actions-primary">
+                  <button
+                    className="button button-danger"
+                    disabled={decisionBusy !== null}
+                    onClick={onShowWithdrawal}
+                    type="button"
+                  >
+                    수락 철회
+                  </button>
+                </div>
+              )
+            ) : detail.offerStatus === "PENDING" ? (
               showReject ? (
                 <form className="reject-form" onSubmit={onReject}>
                   <div className="detail-section-title"><h3>거절 사유 선택</h3></div>
@@ -514,24 +842,41 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
   const [activeTotal, setActiveTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
+  const [selectedOffer, setSelectedOffer] =
+    useState<HospitalOfferListItem | null>(null);
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
   const [detail, setDetail] = useState<HospitalOfferDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<unknown>(null);
-  const [decisionBusy, setDecisionBusy] = useState<"accept" | "reject" | null>(null);
+  const [decisionBusy, setDecisionBusy] = useState<DecisionAction | null>(null);
   const [decisionError, setDecisionError] = useState<unknown>(null);
   const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
   const [showReject, setShowReject] = useState(false);
+  const [showWithdrawal, setShowWithdrawal] = useState(false);
   const [rejectReason, setRejectReason] = useState<RejectionReason | "">("");
   const [rejectDetail, setRejectDetail] = useState("");
+  const [withdrawalReason, setWithdrawalReason] = useState<
+    WithdrawalReason | ""
+  >("");
+  const [withdrawalDetail, setWithdrawalDetail] = useState("");
   const [streamState, setStreamState] = useState<StreamState>("CONNECTING");
-  const currentRef = useRef({ view, page, selectedOfferId });
+  const currentRef = useRef({
+    view,
+    page,
+    selectedOfferId,
+    selectedOfferKey: selectedOffer?.offerId ?? null,
+  });
   const expiredRef = useRef(onSessionExpired);
 
   useEffect(() => {
-    currentRef.current = { view, page, selectedOfferId };
+    currentRef.current = {
+      view,
+      page,
+      selectedOfferId,
+      selectedOfferKey: selectedOffer?.offerId ?? null,
+    };
     expiredRef.current = onSessionExpired;
-  }, [onSessionExpired, page, selectedOfferId, view]);
+  }, [onSessionExpired, page, selectedOffer?.offerId, selectedOfferId, view]);
 
   const loadOffers = useCallback(async (targetView: OfferView, targetPage: number) => {
     setLoading(true);
@@ -548,19 +893,31 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
     }
   }, []);
 
-  const refreshActive = useCallback(async () => {
-    const current = currentRef.current;
-    if (current.view === "ACTIVE") {
-      await loadOffers("ACTIVE", current.page);
-      return;
-    }
+  const refreshBoth = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      const active = await hospitalApi.offers("ACTIVE", 0, 20);
+      const [active, history] = await Promise.all([
+        hospitalApi.offers("ACTIVE", 0, 20),
+        hospitalApi.offers("HISTORY", 0, 20),
+      ]);
       setActiveTotal(active.totalElements);
+      setResult(currentRef.current.view === "ACTIVE" ? active : history);
+      const selectedOfferKey = currentRef.current.selectedOfferKey;
+      if (selectedOfferKey) {
+        const refreshedSelection = [...active.items, ...history.items].find(
+          (offer) => offer.offerId === selectedOfferKey,
+        );
+        if (refreshedSelection) setSelectedOffer(refreshedSelection);
+      }
+      setPage(0);
     } catch (nextError) {
+      setError(nextError);
       if (isSessionError(nextError)) expiredRef.current();
+    } finally {
+      setLoading(false);
     }
-  }, [loadOffers]);
+  }, []);
 
   const loadDetail = useCallback(async (offerId: string) => {
     setDetailLoading(true);
@@ -572,14 +929,15 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
       setDetailError(nextError);
       if (isSessionError(nextError)) expiredRef.current();
       if (nextError instanceof ApiError && nextError.code === "TRANSPORT_005") {
+        setSelectedOffer(null);
         setSelectedOfferId(null);
         setDetail(null);
-        await loadOffers(currentRef.current.view, currentRef.current.page);
+        await refreshBoth();
       }
     } finally {
       setDetailLoading(false);
     }
-  }, [loadOffers]);
+  }, [refreshBoth]);
 
   useEffect(() => {
     const loadTimer = window.setTimeout(() => void loadOffers(view, page), 0);
@@ -589,7 +947,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
   useEffect(() => {
     const onFocus = () => {
       if (document.visibilityState !== "visible") return;
-      void refreshActive();
+      void refreshBoth();
       const currentOfferId = currentRef.current.selectedOfferId;
       if (currentOfferId) void loadDetail(currentOfferId);
     };
@@ -599,7 +957,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
     };
-  }, [loadDetail, refreshActive]);
+  }, [loadDetail, refreshBoth]);
 
   useEffect(() => {
     let source: EventSource | null = null;
@@ -612,7 +970,9 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
       source = new EventSource("/api/realtime/events");
       source.onopen = () => {
         setStreamState("CONNECTED");
-        void refreshActive();
+        void refreshBoth();
+        const currentOfferId = currentRef.current.selectedOfferId;
+        if (currentOfferId) void loadDetail(currentOfferId);
       };
       source.addEventListener("update", (event) => {
         let update: RealtimeUpdate | null = null;
@@ -621,14 +981,19 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
         } catch {
           return;
         }
-        if (update.type === "TRANSPORT_REQUEST_RECEIVED" || update.type === "ETA_UPDATED") {
-          void refreshActive();
+        if (shouldRefreshBothOfferLists(update.type)) {
+          void refreshBoth();
         }
+        const selectedOfferId = currentRef.current.selectedOfferId;
         if (
-          update.type === "ETA_UPDATED" &&
-          update.aggregateId === currentRef.current.selectedOfferId
+          shouldRefreshSelectedOffer(
+            update.type,
+            update.aggregateId,
+            selectedOfferId,
+          ) &&
+          selectedOfferId
         ) {
-          void loadDetail(update.aggregateId);
+          void loadDetail(selectedOfferId);
         }
       });
       source.onerror = () => {
@@ -645,7 +1010,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
           } catch {
             // 일시적인 네트워크 오류는 SSE 재연결로 복구합니다.
           }
-          void refreshActive();
+          void refreshBoth();
           connect();
         }, 2_000);
       };
@@ -657,33 +1022,41 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
       source?.close();
       if (retryTimer != null) window.clearTimeout(retryTimer);
     };
-  }, [loadDetail, refreshActive]);
+  }, [loadDetail, refreshBoth]);
 
-  const selectOffer = (offerId: string) => {
-    setSelectedOfferId(offerId);
+  const selectOffer = (offer: HospitalOfferListItem) => {
+    const restricted = isMinimalHospitalOffer(view, offer.offerStatus);
+    setSelectedOffer(offer);
+    setSelectedOfferId(restricted ? null : offer.offerId);
     setDetail(null);
     setDecisionError(null);
     setDecisionNotice(null);
     setShowReject(false);
+    setShowWithdrawal(false);
     setRejectReason("");
     setRejectDetail("");
-    void loadDetail(offerId);
+    setWithdrawalReason("");
+    setWithdrawalDetail("");
+    if (!restricted) void loadDetail(offer.offerId);
   };
 
   const closeDetail = () => {
+    setSelectedOffer(null);
     setSelectedOfferId(null);
     setDetail(null);
     setDetailError(null);
     setDecisionError(null);
     setDecisionNotice(null);
     setShowReject(false);
+    setShowWithdrawal(false);
+    setRejectReason("");
+    setRejectDetail("");
+    setWithdrawalReason("");
+    setWithdrawalDetail("");
   };
 
   const refreshAfterDecision = async (offerId: string) => {
-    await Promise.all([
-      loadOffers(currentRef.current.view, currentRef.current.page),
-      loadDetail(offerId),
-    ]);
+    await Promise.all([refreshBoth(), loadDetail(offerId)]);
   };
 
   const accept = async () => {
@@ -773,6 +1146,100 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
     }
   };
 
+  const withdrawAcceptance = async (event: FormEvent) => {
+    event.preventDefault();
+    const offerId = detail?.offerId ?? selectedOffer?.offerId;
+    const canWithdraw = detail?.canWithdraw ?? selectedOffer?.canWithdraw;
+    if (!offerId || !canWithdraw || !withdrawalReason) return;
+
+    let payload: { reason: WithdrawalReason; detail: string | null };
+    try {
+      payload = createWithdrawalPayload(
+        withdrawalReason,
+        withdrawalDetail,
+      ) as { reason: WithdrawalReason; detail: string | null };
+    } catch (payloadError) {
+      setDecisionError(payloadError);
+      return;
+    }
+
+    const command = getOrCreateOfferCommand(
+      window.sessionStorage,
+      offerId,
+      "withdraw",
+      payload,
+    );
+    setDecisionBusy("withdraw");
+    setDecisionError(null);
+    setDecisionNotice(null);
+    try {
+      const response = await hospitalApi.withdrawAcceptance(
+        offerId,
+        payload,
+        command.idempotencyKey,
+      );
+      clearOfferCommand(window.sessionStorage, offerId, command.idempotencyKey);
+      setDecisionNotice(
+        response.idempotentReplay
+          ? "이전에 처리된 수락 철회 결과를 복구했습니다."
+          : response.searchRestarted
+            ? "수락을 철회했습니다. 서버가 목적지 상태를 정리하고 병원 탐색을 다시 확인합니다."
+            : "수락을 철회했습니다. 현재 목적지는 유지됩니다.",
+      );
+      setShowWithdrawal(false);
+      setSelectedOffer((current) =>
+        current
+          ? {
+              ...current,
+              transportRequestStatus: response.transportRequestStatus,
+              offerStatus: "ACCEPTANCE_WITHDRAWN",
+              currentDestination: false,
+              canWithdraw: false,
+              dispatchAttemptNumber: null,
+              ageStatus: null,
+              ageYears: null,
+              sex: null,
+              preKtasClassificationStatus: null,
+              preKtasLevel: null,
+              preKtasExceptionReason: null,
+              straightLineDistanceMeters: null,
+              routeEstimateStatus: null,
+              routeDistanceMeters: null,
+              etaSeconds: null,
+              offeredAt: null,
+              withdrawalReason: response.reason,
+              withdrawalDetail: response.detail,
+              withdrawnAt: response.withdrawnAt,
+            }
+          : current,
+      );
+      setSelectedOfferId(null);
+      setDetail(null);
+      await refreshBoth();
+    } catch (nextError) {
+      setDecisionError(nextError);
+      if (isSessionError(nextError)) expiredRef.current();
+      if (nextError instanceof ApiError && nextError.code === "COMMON_001") {
+        clearOfferCommand(window.sessionStorage, offerId, command.idempotencyKey);
+      }
+      if (
+        nextError instanceof ApiError &&
+        ["TRANSPORT_004", "TRANSPORT_005", "TRANSPORT_006", "COMMON_005"].includes(
+          nextError.code,
+        )
+      ) {
+        clearOfferCommand(window.sessionStorage, offerId, command.idempotencyKey);
+        setSelectedOffer(null);
+        setSelectedOfferId(null);
+        setDetail(null);
+        await refreshBoth();
+        setError(nextError);
+      }
+    } finally {
+      setDecisionBusy(null);
+    }
+  };
+
   const items = result?.items ?? [];
   const totalPages = Math.max(1, result?.totalPages ?? 1);
 
@@ -786,7 +1253,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
             <p>
               {view === "ACTIVE"
                 ? "상세 임상정보와 예상 거리를 확인한 뒤 현재 수용 가능 여부를 응답해 주세요."
-                : "거절·무응답으로 종료된 제안과 마스킹된 회신 정보를 확인합니다."}
+                : "거절·무응답·수락 철회와 비목적지 병원의 최소 응답 이력을 확인합니다."}
             </p>
           </div>
           <div className={`stream-chip stream-${streamState.toLowerCase()}`}>
@@ -838,14 +1305,19 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
             <span>
               {view === "ACTIVE"
                 ? "수신 ON 상태에서 새 제안이 오면 실시간으로 목록을 다시 조회합니다."
-                : "거절 또는 무응답으로 종료된 제안이 이곳에 표시됩니다."}
+                : "거절·무응답·수락 철회와 비목적지 수락 이력이 이곳에 표시됩니다."}
             </span>
           </div>
         ) : null}
         {items.length ? (
           <div className="offer-list">
             {items.map((offer) => (
-              <OfferCard key={offer.offerId} offer={offer} onSelect={() => selectOffer(offer.offerId)} />
+              <OfferCard
+                key={offer.offerId}
+                offer={offer}
+                onSelect={() => selectOffer(offer)}
+                view={view}
+              />
             ))}
           </div>
         ) : null}
@@ -869,14 +1341,40 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
           loading={detailLoading}
           onAccept={() => void accept()}
           onCancelReject={() => { setShowReject(false); setDecisionError(null); }}
+          onCancelWithdrawal={() => { setShowWithdrawal(false); setDecisionError(null); }}
           onClose={closeDetail}
           onReject={(event) => void reject(event)}
           onRejectDetail={setRejectDetail}
           onRejectReason={setRejectReason}
           onShowReject={() => { setShowReject(true); setDecisionError(null); }}
+          onShowWithdrawal={() => { setShowWithdrawal(true); setDecisionError(null); }}
+          onWithdrawalDetail={setWithdrawalDetail}
+          onWithdrawalReason={setWithdrawalReason}
+          onWithdraw={(event) => void withdrawAcceptance(event)}
           rejectDetail={rejectDetail}
           rejectReason={rejectReason}
           showReject={showReject}
+          showWithdrawal={showWithdrawal}
+          withdrawalDetail={withdrawalDetail}
+          withdrawalReason={withdrawalReason}
+        />
+      ) : null}
+
+      {selectedOffer && !selectedOfferId ? (
+        <MinimalHistoryModal
+          decisionBusy={decisionBusy}
+          decisionError={decisionError}
+          decisionNotice={decisionNotice}
+          offer={selectedOffer}
+          onCancelWithdrawal={() => { setShowWithdrawal(false); setDecisionError(null); }}
+          onClose={closeDetail}
+          onShowWithdrawal={() => { setShowWithdrawal(true); setDecisionError(null); }}
+          onWithdrawalDetail={setWithdrawalDetail}
+          onWithdrawalReason={setWithdrawalReason}
+          onWithdraw={(event) => void withdrawAcceptance(event)}
+          showWithdrawal={showWithdrawal}
+          withdrawalDetail={withdrawalDetail}
+          withdrawalReason={withdrawalReason}
         />
       ) : null}
     </>

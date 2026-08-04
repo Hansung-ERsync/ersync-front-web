@@ -586,12 +586,13 @@ function HospitalApp({
           </div>
           <div className="info-card">
             <span className="eyebrow">연동 상태</span>
-            <h2>기능 1·2·3 병원 계약 연결 완료</h2>
+            <h2>기능 1·2·3·4 병원 계약 연결 완료</h2>
             <ul className="check-list">
               <li>응급실 연락처와 필수 제공 동의가 포함된 병원 가입</li>
               <li>병원 로그인과 토큰 자동 교체</li>
               <li>인증된 병원의 수신 ON/OFF 변경</li>
               <li>병원 제안 목록·상세와 수락·거절 응답</li>
+              <li>현재 목적지 표시와 병원 수락 철회</li>
               <li>실제 도로 거리·ETA와 실시간 상태 갱신</li>
               <li>인증 만료·비활성 계정 자동 로그아웃</li>
             </ul>
