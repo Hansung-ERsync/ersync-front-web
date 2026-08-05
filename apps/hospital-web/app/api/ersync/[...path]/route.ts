@@ -16,12 +16,16 @@ import { hospitalBackendHeaders } from "../../_lib/request-headers.js";
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
-const publicRoutes = new Set(["POST auth/signups/hospital"]);
+const publicRoutes = new Set([
+  "POST auth/invitations/validate",
+  "POST auth/signups/hospital",
+]);
 const offerIdPattern =
   "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
 function isAllowed(method: string, path: string) {
   if (publicRoutes.has(`${method} ${path}`)) return true;
+  if (method === "GET" && path === "hospitals/me") return true;
   if (method === "PUT" && path === "hospitals/me/receiving-status") return true;
   if (method === "GET" && path === "hospitals/me/offers") return true;
   if (
@@ -30,11 +34,21 @@ function isAllowed(method: string, path: string) {
   ) {
     return true;
   }
+  if (
+    method === "GET" &&
+    new RegExp(
+      `^hospitals/me/offers/${offerIdPattern}/(clinical-timeline|location)$`,
+      "i",
+    ).test(path)
+  ) {
+    return true;
+  }
   return (
     method === "POST" &&
-    new RegExp(`^hospitals/me/offers/${offerIdPattern}/(accept|reject)$`, "i").test(
-      path,
-    )
+    new RegExp(
+      `^hospitals/me/offers/${offerIdPattern}/(accept|reject|withdraw-acceptance|confirm-handoff)$`,
+      "i",
+    ).test(path)
   );
 }
 
