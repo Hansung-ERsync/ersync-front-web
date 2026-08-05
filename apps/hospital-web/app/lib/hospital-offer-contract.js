@@ -9,6 +9,8 @@ export const WITHDRAWAL_REASONS = [
   "OTHER",
 ];
 
+const TERMINAL_TRANSPORT_STATUSES = new Set(["COMPLETED", "CANCELLED"]);
+
 /**
  * @param {string} reason
  * @param {string | null | undefined} detail
@@ -35,9 +37,15 @@ export function createWithdrawalPayload(reason, detail) {
  *
  * @param {"ACTIVE" | "HISTORY"} view
  * @param {string} offerStatus
+ * @param {string | null | undefined} transportRequestStatus
  */
-export function isMinimalHospitalOffer(view, offerStatus) {
+export function isMinimalHospitalOffer(
+  view,
+  offerStatus,
+  transportRequestStatus = null,
+) {
   return (
+    TERMINAL_TRANSPORT_STATUSES.has(transportRequestStatus ?? "") ||
     offerStatus === "ACCEPTANCE_WITHDRAWN" ||
     (view === "HISTORY" && offerStatus === "ACCEPTED")
   );
@@ -46,10 +54,15 @@ export function isMinimalHospitalOffer(view, offerStatus) {
 /**
  * @param {"ACTIVE" | "HISTORY"} view
  * @param {string} offerStatus
+ * @param {string | null | undefined} transportRequestStatus
  */
-export function canReadClinicalTimeline(view, offerStatus) {
+export function canReadClinicalTimeline(
+  view,
+  offerStatus,
+  transportRequestStatus = null,
+) {
   return (
-    !isMinimalHospitalOffer(view, offerStatus) &&
+    !isMinimalHospitalOffer(view, offerStatus, transportRequestStatus) &&
     (offerStatus === "PENDING" || offerStatus === "ACCEPTED")
   );
 }
@@ -57,9 +70,18 @@ export function canReadClinicalTimeline(view, offerStatus) {
 /**
  * @param {string} offerStatus
  * @param {boolean} currentDestination
+ * @param {string | null | undefined} transportRequestStatus
  */
-export function canReadHospitalLocation(offerStatus, currentDestination) {
-  return offerStatus === "ACCEPTED" && currentDestination;
+export function canReadHospitalLocation(
+  offerStatus,
+  currentDestination,
+  transportRequestStatus = null,
+) {
+  return (
+    !TERMINAL_TRANSPORT_STATUSES.has(transportRequestStatus ?? "") &&
+    offerStatus === "ACCEPTED" &&
+    currentDestination
+  );
 }
 
 const REALTIME_CLINICAL_TYPES = new Set([
@@ -75,12 +97,20 @@ const REALTIME_LIST_REFRESH_TYPES = new Set([
   "DESTINATION_SELECTED",
   "DESTINATION_CHANGED",
   "HOSPITAL_ACCEPTANCE_WITHDRAWN",
+  "TRANSPORT_CANCELLED",
+  "HANDOFF_REQUESTED",
+  "HANDOFF_COMPLETED",
   ...REALTIME_CLINICAL_TYPES,
 ]);
 const REALTIME_DESTINATION_TYPES = new Set([
   "DESTINATION_SELECTED",
   "DESTINATION_CHANGED",
   "HOSPITAL_ACCEPTANCE_WITHDRAWN",
+]);
+const REALTIME_LIFECYCLE_TYPES = new Set([
+  "TRANSPORT_CANCELLED",
+  "HANDOFF_REQUESTED",
+  "HANDOFF_COMPLETED",
 ]);
 
 /**
@@ -102,6 +132,13 @@ export function isDestinationRealtimeType(type) {
  */
 export function isClinicalRealtimeType(type) {
   return REALTIME_CLINICAL_TYPES.has(type);
+}
+
+/**
+ * @param {string} type
+ */
+export function isTransportLifecycleRealtimeType(type) {
+  return REALTIME_LIFECYCLE_TYPES.has(type);
 }
 
 /**
@@ -162,7 +199,7 @@ export function shouldRefreshSelectedLocation(
 }
 
 /**
- * @param {"accept" | "reject" | "withdraw"} action
+ * @param {"accept" | "reject" | "withdraw" | "confirm-handoff"} action
  */
 export function createOfferIdempotencyKey(action) {
   const key = `hospital-${action}:${crypto.randomUUID()}`;
@@ -175,7 +212,7 @@ export function createOfferIdempotencyKey(action) {
 /**
  * @param {Storage} storage
  * @param {string} offerId
- * @param {"accept" | "reject" | "withdraw"} action
+ * @param {"accept" | "reject" | "withdraw" | "confirm-handoff"} action
  * @param {unknown} payload
  */
 export function getOrCreateOfferCommand(storage, offerId, action, payload) {

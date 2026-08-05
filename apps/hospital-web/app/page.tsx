@@ -1,10 +1,11 @@
 ﻿"use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   errorMessage,
   hospitalApi,
+  HospitalProfile,
   Session,
   sessionApi,
 } from "./lib/api";
@@ -421,40 +422,96 @@ function HospitalApp({
   const [receiving, setReceiving] = useState<"ON" | "OFF" | "UNKNOWN">(
     "UNKNOWN",
   );
+  const [profile, setProfile] = useState<HospitalProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
   const [changing, setChanging] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [clock, setClock] = useState("");
+  const expiredRef = useRef(onSessionExpired);
+  const changingRef = useRef(false);
+  const profileOperationRef = useRef(0);
+
+  useEffect(() => {
+    expiredRef.current = onSessionExpired;
+  }, [onSessionExpired]);
+
+  const loadProfile = useCallback(async () => {
+    if (changingRef.current) return;
+    const operation = ++profileOperationRef.current;
+    setProfileLoading(true);
+    setError(null);
+    try {
+      const next = await hospitalApi.profile();
+      if (operation === profileOperationRef.current) {
+        setProfile(next);
+        setReceiving(next.receivingStatus);
+      }
+    } catch (nextError) {
+      if (operation === profileOperationRef.current) setError(nextError);
+      if (
+        nextError instanceof ApiError &&
+        ["AUTH_001", "AUTH_002", "AUTH_005", "USER_002"].includes(
+          nextError.code,
+        )
+      ) {
+        expiredRef.current();
+      }
+    } finally {
+      if (operation === profileOperationRef.current) setProfileLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(
       () => setClock(new Date().toLocaleTimeString("ko-KR", { hour12: false })),
       1000,
     );
-    const saved = window.localStorage.getItem(
-      `ersync-receiving-${session.accountId}`,
-    );
     const restoreTimer = window.setTimeout(() => {
       setClock(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
-      if (saved === "ON" || saved === "OFF") setReceiving(saved);
+      void loadProfile();
     }, 0);
     return () => {
       window.clearInterval(timer);
       window.clearTimeout(restoreTimer);
     };
-  }, [session.accountId]);
+  }, [loadProfile, session.accessTokenExpiresAt]);
+
+  useEffect(() => {
+    const refreshProfile = () => {
+      if (document.visibilityState === "visible") void loadProfile();
+    };
+    window.addEventListener("focus", refreshProfile);
+    document.addEventListener("visibilitychange", refreshProfile);
+    return () => {
+      window.removeEventListener("focus", refreshProfile);
+      document.removeEventListener("visibilitychange", refreshProfile);
+    };
+  }, [loadProfile]);
 
   const setStatus = async (status: "ON" | "OFF") => {
+    if (!profile || profileLoading || changingRef.current) return;
+    let recoverServerState = false;
+    const operation = ++profileOperationRef.current;
+    changingRef.current = true;
     setChanging(true);
     setError(null);
     try {
       const result = await hospitalApi.setReceivingStatus(status);
-      setReceiving(result.status);
-      window.localStorage.setItem(
-        `ersync-receiving-${session.accountId}`,
-        result.status,
-      );
+      if (operation === profileOperationRef.current) {
+        setReceiving(result.status);
+        setProfile((current) =>
+          current
+            ? {
+                ...current,
+                receivingStatus: result.status,
+                updatedAt: result.updatedAt,
+              }
+            : current,
+        );
+      }
     } catch (nextError) {
-      setError(nextError);
+      if (operation === profileOperationRef.current) setError(nextError);
+      recoverServerState = !(nextError instanceof ApiError);
       if (
         nextError instanceof ApiError &&
         ["AUTH_001", "AUTH_002", "AUTH_005", "USER_002"].includes(nextError.code)
@@ -462,7 +519,9 @@ function HospitalApp({
         onSessionExpired();
       }
     } finally {
+      changingRef.current = false;
       setChanging(false);
+      if (recoverServerState) void loadProfile();
     }
   };
 
@@ -473,7 +532,9 @@ function HospitalApp({
       <header className="topbar">
         <div className="wordmark">ERSync</div>
         <div className="topbar-divider" />
-        <div className="facility-title">병원 공용 계정 · 응급실</div>
+        <div className="facility-title">
+          {profile?.organizationName || "병원 공용 계정"} · 응급실
+        </div>
         <div className={`live-chip live-chip-${receiving.toLowerCase()}`}>
           <span />
           {live
@@ -499,9 +560,9 @@ function HospitalApp({
         <div className="topbar-divider" />
         <time className="clock">{clock}</time>
         <div className="account-mini">
-          <span>{(session.loginId || "병").slice(0, 1).toUpperCase()}</span>
+          <span>{(profile?.loginId || session.loginId || "병").slice(0, 1).toUpperCase()}</span>
           <div>
-            <strong>{session.loginId || "병원 계정"}</strong>
+            <strong>{profile?.loginId || session.loginId || "병원 계정"}</strong>
             <small>HOSPITAL STAFF</small>
           </div>
         </div>
@@ -521,13 +582,13 @@ function HospitalApp({
                   : "수신 상태를 선택해 주세요"}
             </h2>
             <p>
-              OFF로 변경해도 이미 생성된 요청은 철회되지 않습니다. 이 브라우저에는
-              마지막 설정값이 표시됩니다.
+              OFF로 변경해도 이미 수락했거나 이동 중인 요청은 유지됩니다. 현재
+              표시는 서버에 저장된 실제 상태입니다.
             </p>
             <div className="status-selector" aria-label="수신 상태 변경">
               <button
                 className={receiving === "ON" ? "selected status-on" : ""}
-                disabled={changing}
+                disabled={changing || profileLoading || !profile}
                 onClick={() => void setStatus("ON")}
               >
                 <span>ON</span>
@@ -535,20 +596,24 @@ function HospitalApp({
               </button>
               <button
                 className={receiving === "OFF" ? "selected status-off" : ""}
-                disabled={changing}
+                disabled={changing || profileLoading || !profile}
                 onClick={() => void setStatus("OFF")}
               >
                 <span>OFF</span>
                 <small>신규 요청 제외</small>
               </button>
             </div>
-            {changing ? <div className="inline-loading">상태 변경 중…</div> : null}
+            {profileLoading ? (
+              <div className="inline-loading">서버 수신 상태 확인 중…</div>
+            ) : changing ? (
+              <div className="inline-loading">상태 변경 중…</div>
+            ) : null}
             <ErrorNotice error={error} />
             <div className="status-footnote">
               <span className={`status-dot status-dot-${receiving.toLowerCase()}`} />
               {receiving === "UNKNOWN"
-                ? "백엔드에 현재 상태 조회 API가 없어 최초 접속 시 확인이 필요합니다."
-                : `최근 설정 기준 · 수신 ${receiving}`}
+                ? "서버의 현재 수신 상태를 확인하지 못했습니다."
+                : `서버 최종 상태 · 수신 ${receiving}`}
             </div>
           </aside>
         </section>
@@ -556,10 +621,10 @@ function HospitalApp({
         <section className="account-layout">
           <div className="account-card">
             <div className="account-identity">
-              <div>{(session.loginId || "병").slice(0, 1).toUpperCase()}</div>
+              <div>{(profile?.loginId || session.loginId || "병").slice(0, 1).toUpperCase()}</div>
               <span>
-                <h1>병원 공용 계정</h1>
-                <p>{session.loginId || "로그인 계정"}</p>
+                <h1>{profile?.organizationName || "병원 공용 계정"}</h1>
+                <p>{profile?.loginId || session.loginId || "로그인 계정"}</p>
               </span>
             </div>
             <dl className="detail-list">
@@ -568,12 +633,28 @@ function HospitalApp({
                 <dd>병원 관계자</dd>
               </div>
               <div>
-                <dt>조직 ID</dt>
-                <dd>{session.organizationId || "-"}</dd>
+                <dt>응급실 주소</dt>
+                <dd>{profile?.address || "-"}</dd>
               </div>
               <div>
-                <dt>계정 ID</dt>
-                <dd>{session.accountId}</dd>
+                <dt>응급실 연락처</dt>
+                <dd>{profile?.contact || "-"}</dd>
+              </div>
+              <div>
+                <dt>응급실 좌표</dt>
+                <dd>
+                  {profile
+                    ? `${profile.latitude.toFixed(6)}, ${profile.longitude.toFixed(6)}`
+                    : "-"}
+                </dd>
+              </div>
+              <div>
+                <dt>서버 수신 상태</dt>
+                <dd>{receiving === "UNKNOWN" ? "확인 필요" : receiving}</dd>
+              </div>
+              <div>
+                <dt>프로필 갱신 시각</dt>
+                <dd>{profile ? formatDate(profile.updatedAt) : "-"}</dd>
               </div>
               <div>
                 <dt>Access Token 만료</dt>
@@ -586,7 +667,7 @@ function HospitalApp({
           </div>
           <div className="info-card">
             <span className="eyebrow">연동 상태</span>
-            <h2>기능 1·2·3·4 병원 계약 연결 완료</h2>
+            <h2>기능 1~6 및 인증 보완 계약 연결 완료</h2>
             <ul className="check-list">
               <li>응급실 연락처와 필수 제공 동의가 포함된 병원 가입</li>
               <li>병원 로그인과 토큰 자동 교체</li>
@@ -594,6 +675,9 @@ function HospitalApp({
               <li>병원 제안 목록·상세와 수락·거절 응답</li>
               <li>현재 목적지 표시와 병원 수락 철회</li>
               <li>실제 도로 거리·ETA와 실시간 상태 갱신</li>
+              <li>인계 확인과 완료·취소 이력 보호</li>
+              <li>서버 기준 병원 정보와 수신 상태 복구</li>
+              <li>병원 역할이 고정된 로그인 요청</li>
               <li>인증 만료·비활성 계정 자동 로그아웃</li>
             </ul>
             <p>

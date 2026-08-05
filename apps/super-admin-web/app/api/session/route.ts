@@ -31,7 +31,11 @@ export async function POST(request: NextRequest) {
     "/api/v1/auth/login",
     {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        loginId: body.loginId,
+        password: body.password,
+        role: "SUPER_ADMIN",
+      }),
     },
   );
 

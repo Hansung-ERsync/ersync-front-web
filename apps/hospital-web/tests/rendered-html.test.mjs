@@ -84,6 +84,32 @@ test("server-renders the ERSync application shell", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
+test("hospital login always sends the fixed HOSPITAL_STAFF role", async () => {
+  let upstreamBody = null;
+  const response = await requestApp(
+    "/api/session",
+    {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ loginId: "shared01", password: "test-password" }),
+    },
+    async (input, init = {}) => {
+      const url = new URL(typeof input === "string" ? input : input.url);
+      assert.equal(url.pathname, "/api/v1/auth/login");
+      upstreamBody = JSON.parse(init.body);
+      return Response.json(authPayload());
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(upstreamBody, {
+    loginId: "shared01",
+    password: "test-password",
+    role: "HOSPITAL_STAFF",
+  });
+  assert.equal((await response.json()).session.role, "HOSPITAL_STAFF");
+});
+
 test("does not expose paramedic assessment or transport APIs", async () => {
   const assessment = await requestApp("/api/ersync/assessment-protocols/active", {
     headers: { accept: "application/json" },
@@ -123,6 +149,12 @@ test("does not expose paramedic assessment or transport APIs", async () => {
 });
 
 test("exposes hospital offer and realtime routes behind authentication", async () => {
+  const profile = await requestApp("/api/ersync/hospitals/me", {
+    headers: { accept: "application/json" },
+  });
+  assert.equal(profile.status, 401);
+  assert.equal((await profile.json()).code, "AUTH_001");
+
   const offers = await requestApp(
     "/api/ersync/hospitals/me/offers?view=ACTIVE&page=0&size=20",
     { headers: { accept: "application/json" } },
@@ -158,6 +190,19 @@ test("exposes hospital offer and realtime routes behind authentication", async (
   assert.equal(withdrawal.status, 401);
   assert.equal((await withdrawal.json()).code, "AUTH_001");
 
+  const confirmHandoff = await requestApp(
+    "/api/ersync/hospitals/me/offers/00112233-4455-6677-8899-aabbccddeeff/confirm-handoff",
+    {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "Idempotency-Key": "hospital-confirm-handoff:test-key",
+      },
+    },
+  );
+  assert.equal(confirmHandoff.status, 401);
+  assert.equal((await confirmHandoff.json()).code, "AUTH_001");
+
   for (const suffix of ["clinical-timeline?page=0&size=50", "location"]) {
     const protectedRead = await requestApp(
       `/api/ersync/hospitals/me/offers/00112233-4455-6677-8899-aabbccddeeff/${suffix}`,
@@ -172,6 +217,41 @@ test("exposes hospital offer and realtime routes behind authentication", async (
   });
   assert.equal(realtime.status, 401);
   assert.equal((await realtime.json()).code, "AUTH_001");
+});
+
+test("forwards the authenticated hospital profile read", async () => {
+  const response = await requestApp(
+    "/api/ersync/hospitals/me",
+    {
+      headers: { accept: "application/json", cookie: hospitalCookies() },
+    },
+    async (input, init = {}) => {
+      const url = new URL(typeof input === "string" ? input : input.url);
+      assert.equal(url.pathname, "/api/v1/hospitals/me");
+      assert.equal(init.method, "GET");
+      assert.equal(
+        new Headers(init.headers).get("Authorization"),
+        "Bearer hospital-access",
+      );
+      return Response.json({
+        accountId: "account-id",
+        loginId: "testhospital",
+        role: "HOSPITAL_STAFF",
+        organizationId: "organization-id",
+        organizationName: "테스트병원",
+        hospitalId: "hospital-id",
+        address: "테스트 주소",
+        latitude: 37.5,
+        longitude: 127.0,
+        contact: "02-0000-0000",
+        receivingStatus: "ON",
+        updatedAt: "2026-08-05T05:00:00Z",
+      });
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).receivingStatus, "ON");
 });
 
 test("forwards authenticated 06 clinical timeline and current-destination location reads", async () => {
@@ -359,6 +439,44 @@ test("forwards accept, reject, and withdrawal commands with exact keys and bodie
     assert.equal(response.status, 200);
     assert.equal((await response.json()).offerStatus, scenario.response.offerStatus);
   }
+});
+
+test("forwards handoff confirmation with the exact idempotency key and no body", async () => {
+  const offerId = "00112233-4455-6677-8899-aabbccddeeff";
+  const key = "hospital-confirm-handoff:test-key";
+  const response = await requestApp(
+    `/api/ersync/hospitals/me/offers/${offerId}/confirm-handoff`,
+    {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        cookie: hospitalCookies(),
+        "Idempotency-Key": key,
+      },
+    },
+    async (input, init = {}) => {
+      const url = new URL(typeof input === "string" ? input : input.url);
+      assert.equal(
+        url.pathname,
+        `/api/v1/hospitals/me/offers/${offerId}/confirm-handoff`,
+      );
+      const headers = new Headers(init.headers);
+      assert.equal(headers.get("Authorization"), "Bearer hospital-access");
+      assert.equal(headers.get("Idempotency-Key"), key);
+      assert.equal(init.method, "POST");
+      assert.ok(init.body == null || init.body === "");
+      return Response.json({
+        offerId,
+        transportRequestId: "request-id",
+        status: "COMPLETED",
+        completedAt: "2026-08-05T05:10:00Z",
+        idempotentReplay: false,
+      });
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).status, "COMPLETED");
 });
 
 test("retries a lost decision with the same key and body after token rotation", async () => {

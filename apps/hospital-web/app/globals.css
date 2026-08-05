@@ -934,7 +934,10 @@ textarea:focus {
   gap: 6px;
 }
 
-.destination-badge {
+.destination-badge,
+.handoff-badge,
+.completed-badge,
+.cancelled-badge {
   display: inline-flex;
   width: max-content;
   padding: 5px 8px;
@@ -944,6 +947,21 @@ textarea:focus {
   font-size: 10px;
   font-weight: 850;
   white-space: nowrap;
+}
+
+.handoff-badge {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.completed-badge {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.cancelled-badge {
+  background: var(--red-soft);
+  color: var(--red-dark);
 }
 
 .offer-card-main,
@@ -1543,6 +1561,18 @@ textarea:focus {
   line-height: 1.55;
 }
 
+.handoff-confirmation-section {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.handoff-confirmation-section p {
+  margin: 0;
+  color: #78350f;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
 .decision-notice {
   padding: 13px 15px;
   border: 1px solid #bbf7d0;
@@ -1621,6 +1651,10 @@ textarea:focus {
 
 .decision-actions-primary .button-primary {
   min-width: 210px;
+}
+
+.handoff-actions .button-primary {
+  min-width: 240px;
 }
 
 .status-dot {

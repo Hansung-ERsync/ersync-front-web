@@ -22,6 +22,7 @@ const offerIdPattern =
 
 function isAllowed(method: string, path: string) {
   if (publicRoutes.has(`${method} ${path}`)) return true;
+  if (method === "GET" && path === "hospitals/me") return true;
   if (method === "PUT" && path === "hospitals/me/receiving-status") return true;
   if (method === "GET" && path === "hospitals/me/offers") return true;
   if (
@@ -42,7 +43,7 @@ function isAllowed(method: string, path: string) {
   return (
     method === "POST" &&
     new RegExp(
-      `^hospitals/me/offers/${offerIdPattern}/(accept|reject|withdraw-acceptance)$`,
+      `^hospitals/me/offers/${offerIdPattern}/(accept|reject|withdraw-acceptance|confirm-handoff)$`,
       "i",
     ).test(path)
   );

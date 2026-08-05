@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   ApiError,
+  CancellationReason,
   ClinicalTimelineItem,
   errorMessage,
   HospitalClinicalTimeline,
@@ -33,6 +34,7 @@ import {
   isClinicalRealtimeType,
   isDestinationRealtimeType,
   isMinimalHospitalOffer,
+  isTransportLifecycleRealtimeType,
   shouldRefreshBothOfferLists,
   shouldRefreshSelectedLocation,
   shouldRefreshSelectedOffer,
@@ -49,7 +51,7 @@ type RealtimeUpdate = {
   occurredAt: string;
 };
 
-type DecisionAction = "accept" | "reject" | "withdraw";
+type DecisionAction = "accept" | "reject" | "withdraw" | "confirm-handoff";
 type OfferSelection = { offer: HospitalOfferListItem; view: OfferView };
 
 const offerStatusLabel: Record<OfferStatus, string> = {
@@ -78,10 +80,20 @@ const withdrawalReasonLabel: Record<WithdrawalReason, string> = {
   OTHER: "기타",
 };
 
+const cancellationReasonLabel: Record<CancellationReason, string> = {
+  PATIENT_REFUSED_TRANSPORT: "환자 이송 거부",
+  GUARDIAN_SELF_TRANSPORT: "보호자 직접 이송",
+  SCENE_RESOLVED: "현장 상황 해소",
+  OTHER: "기타",
+};
+
 const enumLabels: Record<string, string> = {
   EXACT: "확인",
   ESTIMATED: "추정",
   UNKNOWN: "미상",
+  HANDOFF_REQUESTED: "인계 확인 대기",
+  COMPLETED: "인계 완료",
+  CANCELLED: "이송 취소",
   MALE: "남성",
   FEMALE: "여성",
   DISEASE: "질병",
@@ -264,7 +276,11 @@ function OfferCard({
   view: OfferView;
   onSelect: () => void;
 }) {
-  const restricted = isMinimalHospitalOffer(view, offer.offerStatus);
+  const restricted = isMinimalHospitalOffer(
+    view,
+    offer.offerStatus,
+    offer.transportRequestStatus,
+  );
   const lastSuccessfulRoute = lastSuccessfulRouteSummary(
     offer.lastSuccessfulRouteDistanceMeters,
     offer.lastSuccessfulEtaSeconds,
@@ -280,11 +296,24 @@ function OfferCard({
         {offer.currentDestination ? (
           <span className="destination-badge">현재 목적지</span>
         ) : null}
+        {offer.transportRequestStatus === "HANDOFF_REQUESTED" ? (
+          <span className="handoff-badge">인계 확인 대기</span>
+        ) : null}
+        {offer.transportRequestStatus === "COMPLETED" ? (
+          <span className="completed-badge">인계 완료</span>
+        ) : null}
+        {offer.transportRequestStatus === "CANCELLED" ? (
+          <span className="cancelled-badge">이송 취소</span>
+        ) : null}
       </div>
       <div className="offer-card-main">
         <strong>
           {restricted
-            ? offer.offerStatus === "ACCEPTANCE_WITHDRAWN"
+            ? offer.transportRequestStatus === "COMPLETED"
+              ? "인계 완료 이력"
+              : offer.transportRequestStatus === "CANCELLED"
+                ? "이송 취소 이력"
+                : offer.offerStatus === "ACCEPTANCE_WITHDRAWN"
               ? "수락 철회 이력"
               : "비목적지 수락 이력"
             : patientSummary(offer)}
@@ -323,6 +352,11 @@ function OfferCard({
         {!restricted && offer.lastClinicalUpdateAt ? (
           <span>임상 갱신 {formatDate(offer.lastClinicalUpdateAt)}</span>
         ) : null}
+        {offer.handoffRequestedAt ? (
+          <span>인계 요청 {formatDate(offer.handoffRequestedAt)}</span>
+        ) : null}
+        {offer.completedAt ? <span>완료 {formatDate(offer.completedAt)}</span> : null}
+        {offer.cancelledAt ? <span>취소 {formatDate(offer.cancelledAt)}</span> : null}
       </div>
       <span className="offer-card-arrow" aria-hidden="true">→</span>
     </button>
@@ -721,6 +755,18 @@ function MinimalHistoryModal({
   onWithdrawalDetail: (detail: string) => void;
   onWithdraw: (event: FormEvent) => void;
 }) {
+  const transportEnded =
+    offer.transportRequestStatus === "COMPLETED" ||
+    offer.transportRequestStatus === "CANCELLED";
+  const historyTitle =
+    offer.transportRequestStatus === "COMPLETED"
+      ? "인계 완료 이력"
+      : offer.transportRequestStatus === "CANCELLED"
+        ? "이송 취소 이력"
+        : offer.offerStatus === "ACCEPTANCE_WITHDRAWN"
+          ? "수락 철회 이력"
+          : "비목적지 수락 이력";
+
   return (
     <div className="offer-modal-backdrop" onMouseDown={onClose}>
       <section
@@ -733,11 +779,7 @@ function MinimalHistoryModal({
         <header className="offer-modal-header">
           <div>
             <span className="eyebrow">병원 응답 최소 이력</span>
-            <h2 id="minimal-history-title">
-              {offer.offerStatus === "ACCEPTANCE_WITHDRAWN"
-                ? "수락 철회 이력"
-                : "비목적지 수락 이력"}
-            </h2>
+            <h2 id="minimal-history-title">{historyTitle}</h2>
           </div>
           <button
             aria-label="이력 닫기"
@@ -768,11 +810,39 @@ function MinimalHistoryModal({
                   <dd>{formatDate(offer.withdrawnAt)}</dd>
                 </div>
               ) : null}
+              {offer.handoffRequestedAt ? (
+                <div>
+                  <dt>인계 요청 시각</dt>
+                  <dd>{formatDate(offer.handoffRequestedAt)}</dd>
+                </div>
+              ) : null}
+              {offer.completedAt ? (
+                <div>
+                  <dt>인계 완료 시각</dt>
+                  <dd>{formatDate(offer.completedAt)}</dd>
+                </div>
+              ) : null}
+              {offer.cancelledAt ? (
+                <div>
+                  <dt>이송 취소 시각</dt>
+                  <dd>{formatDate(offer.cancelledAt)}</dd>
+                </div>
+              ) : null}
+              {offer.cancellationReason ? (
+                <div>
+                  <dt>취소 사유</dt>
+                  <dd>{cancellationReasonLabel[offer.cancellationReason]}</dd>
+                </div>
+              ) : null}
             </dl>
           </div>
 
           <div className="privacy-restriction-card">
-            <strong>목적지 병원이 아닌 조직에는 최소 이력만 제공됩니다.</strong>
+            <strong>
+              {transportEnded
+                ? "종료된 이송은 최소 상태 이력만 제공됩니다."
+                : "목적지 병원이 아닌 조직에는 최소 이력만 제공됩니다."}
+            </strong>
             <span>
               환자 임상정보, 구급대원 연락처, 거리·ETA와 정확한 위치는 조회하지
               않습니다.
@@ -796,7 +866,7 @@ function MinimalHistoryModal({
           ) : null}
           <OfferError error={decisionError} />
 
-          {offer.canWithdraw ? (
+          {offer.canWithdraw && !transportEnded ? (
             showWithdrawal ? (
               <WithdrawalForm
                 decisionBusy={decisionBusy}
@@ -847,6 +917,7 @@ function OfferDetailModal({
   withdrawalDetail,
   onClose,
   onAccept,
+  onConfirmHandoff,
   onShowReject,
   onCancelReject,
   onRejectReason,
@@ -879,6 +950,7 @@ function OfferDetailModal({
   withdrawalDetail: string;
   onClose: () => void;
   onAccept: () => void;
+  onConfirmHandoff: () => void;
   onShowReject: () => void;
   onCancelReject: () => void;
   onRejectReason: (reason: RejectionReason | "") => void;
@@ -943,6 +1015,19 @@ function OfferDetailModal({
                 <strong>{detail.dispatchAttemptNumber}차</strong>
               </div>
             </div>
+
+            {detail.handoffRequestedAt ? (
+              <section className="detail-section handoff-confirmation-section">
+                <div className="detail-section-title">
+                  <h3>환자 인계 요청</h3>
+                  <time>요청 {formatDate(detail.handoffRequestedAt)}</time>
+                </div>
+                <p>
+                  구급대원이 현재 목적지 병원에 환자 인계를 요청했습니다. 실제
+                  인계가 끝난 뒤에만 확인해 주세요.
+                </p>
+              </section>
+            ) : null}
 
             <section className="detail-section">
               <div className="detail-section-title">
@@ -1077,7 +1162,22 @@ function OfferDetailModal({
             {decisionNotice ? <div className="decision-notice" role="status">{decisionNotice}</div> : null}
             <OfferError error={decisionError} />
 
-            {detail.canWithdraw ? (
+            {detail.canConfirmHandoff ? (
+              <div className="decision-actions decision-actions-primary handoff-actions">
+                <button
+                  className="button button-primary"
+                  disabled={decisionBusy !== null}
+                  onClick={onConfirmHandoff}
+                  type="button"
+                >
+                  {decisionBusy === "confirm-handoff"
+                    ? "인계 확인 중…"
+                    : decisionError
+                      ? "같은 인계 확인 다시 시도"
+                      : "환자 인계 완료 확인"}
+                </button>
+              </div>
+            ) : detail.canWithdraw ? (
               showWithdrawal ? (
                 <WithdrawalForm
                   decisionBusy={decisionBusy}
@@ -1389,7 +1489,13 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
     const { offer, view: offerView } = selection;
     setSelectedOffer(offer);
     setSelectedOfferView(offerView);
-    if (isMinimalHospitalOffer(offerView, offer.offerStatus)) {
+    if (
+      isMinimalHospitalOffer(
+        offerView,
+        offer.offerStatus,
+        offer.transportRequestStatus,
+      )
+    ) {
       setSelectedOfferId(null);
       clearProtectedData();
       return;
@@ -1397,13 +1503,25 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
 
     setSelectedOfferId(offer.offerId);
     const tasks: Promise<void>[] = [loadDetail(offer.offerId)];
-    if (canReadClinicalTimeline(offerView, offer.offerStatus)) {
+    if (
+      canReadClinicalTimeline(
+        offerView,
+        offer.offerStatus,
+        offer.transportRequestStatus,
+      )
+    ) {
       tasks.push(loadTimeline(offer.offerId, targetTimelinePage));
     } else {
       setTimeline(null);
       setTimelineError(null);
     }
-    if (canReadHospitalLocation(offer.offerStatus, offer.currentDestination)) {
+    if (
+      canReadHospitalLocation(
+        offer.offerStatus,
+        offer.currentDestination,
+        offer.transportRequestStatus,
+      )
+    ) {
       tasks.push(loadLocation(offer.offerId));
     } else {
       setLocation(null);
@@ -1449,7 +1567,10 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
   }, [refreshVisibleSelection]);
 
   const handleRealtimeUpdate = useCallback(async (update: RealtimeUpdate) => {
-    if (isDestinationRealtimeType(update.type)) {
+    if (
+      isDestinationRealtimeType(update.type) ||
+      isTransportLifecycleRealtimeType(update.type)
+    ) {
       await refreshVisibleSelection();
       return;
     }
@@ -1505,6 +1626,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
         canReadHospitalLocation(
           refreshedSelection.offer.offerStatus,
           refreshedSelection.offer.currentDestination,
+          refreshedSelection.offer.transportRequestStatus,
         )
       ) {
         await loadLocation(refreshedSelection.offer.offerId);
@@ -1603,6 +1725,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
       !canReadHospitalLocation(
         selectedOffer.offerStatus,
         selectedOffer.currentDestination,
+        selectedOffer.transportRequestStatus,
       )
     ) {
       return;
@@ -1683,6 +1806,59 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
       }
       if (nextError instanceof ApiError && nextError.code === "COMMON_001") {
         clearOfferCommand(window.sessionStorage, detail.offerId, command.idempotencyKey);
+      }
+    } finally {
+      setDecisionBusy(null);
+    }
+  };
+
+  const confirmHandoff = async () => {
+    if (!detail?.canConfirmHandoff) return;
+    const command = getOrCreateOfferCommand(
+      window.sessionStorage,
+      detail.offerId,
+      "confirm-handoff",
+      null,
+    );
+    setDecisionBusy("confirm-handoff");
+    setDecisionError(null);
+    setDecisionNotice(null);
+    try {
+      const response = await hospitalApi.confirmHandoff(
+        detail.offerId,
+        command.idempotencyKey,
+      );
+      clearOfferCommand(
+        window.sessionStorage,
+        detail.offerId,
+        command.idempotencyKey,
+      );
+      setDecisionNotice(
+        response.idempotentReplay
+          ? "이전에 처리된 인계 완료 결과를 복구했습니다."
+          : "환자 인계를 완료 처리했습니다.",
+      );
+      await refreshAfterDecision();
+    } catch (nextError) {
+      setDecisionError(nextError);
+      if (isSessionError(nextError)) expiredRef.current();
+      if (
+        nextError instanceof ApiError &&
+        ["COMMON_001", "TRANSPORT_004", "TRANSPORT_005", "COMMON_005"].includes(
+          nextError.code,
+        )
+      ) {
+        clearOfferCommand(
+          window.sessionStorage,
+          detail.offerId,
+          command.idempotencyKey,
+        );
+      }
+      if (
+        nextError instanceof ApiError &&
+        ["TRANSPORT_004", "TRANSPORT_005", "COMMON_005"].includes(nextError.code)
+      ) {
+        await refreshAfterDecision();
       }
     } finally {
       setDecisionBusy(null);
@@ -1851,7 +2027,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
             <p>
               {view === "ACTIVE"
                 ? "상세 임상정보와 예상 거리를 확인한 뒤 현재 수용 가능 여부를 응답해 주세요."
-                : "거절·무응답·수락 철회와 비목적지 병원의 최소 응답 이력을 확인합니다."}
+                : "완료·취소·거절·무응답·수락 철회 이력을 최소 정보로 확인합니다."}
             </p>
           </div>
           <div className={`stream-chip stream-${streamState.toLowerCase()}`}>
@@ -1903,7 +2079,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
             <span>
               {view === "ACTIVE"
                 ? "수신 ON 상태에서 새 제안이 오면 실시간으로 목록을 다시 조회합니다."
-                : "거절·무응답·수락 철회와 비목적지 수락 이력이 이곳에 표시됩니다."}
+                : "완료·취소·거절·무응답·수락 철회 이력이 이곳에 표시됩니다."}
             </span>
           </div>
         ) : null}
@@ -1941,6 +2117,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
           locationError={locationError}
           locationLoading={locationLoading}
           onAccept={() => void accept()}
+          onConfirmHandoff={() => void confirmHandoff()}
           onCancelReject={() => { setShowReject(false); setDecisionError(null); }}
           onCancelWithdrawal={() => { setShowWithdrawal(false); setDecisionError(null); }}
           onClose={closeDetail}

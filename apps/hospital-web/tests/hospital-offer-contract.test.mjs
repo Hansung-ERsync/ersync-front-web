@@ -12,6 +12,7 @@ import {
   isClinicalRealtimeType,
   isDestinationRealtimeType,
   isMinimalHospitalOffer,
+  isTransportLifecycleRealtimeType,
   shouldRefreshBothOfferLists,
   shouldRefreshSelectedLocation,
   shouldRefreshSelectedOffer,
@@ -102,12 +103,39 @@ test("reuses a withdrawal key only while the withdrawal command is unchanged", (
   assert.notEqual(changed.idempotencyKey, first.idempotencyKey);
 });
 
+test("reuses the same handoff confirmation key after a lost response", () => {
+  const storage = new MemoryStorage();
+  const first = getOrCreateOfferCommand(
+    storage,
+    "offer-handoff",
+    "confirm-handoff",
+    null,
+  );
+  const retry = getOrCreateOfferCommand(
+    storage,
+    "offer-handoff",
+    "confirm-handoff",
+    null,
+  );
+
+  assert.equal(retry.idempotencyKey, first.idempotencyKey);
+  assert.match(first.idempotencyKey, IDEMPOTENCY_KEY_PATTERN);
+});
+
 test("blocks clinical detail for hidden accepted and withdrawn history", () => {
   assert.equal(isMinimalHospitalOffer("HISTORY", "ACCEPTED"), true);
   assert.equal(isMinimalHospitalOffer("HISTORY", "ACCEPTANCE_WITHDRAWN"), true);
   assert.equal(isMinimalHospitalOffer("ACTIVE", "ACCEPTANCE_WITHDRAWN"), true);
   assert.equal(isMinimalHospitalOffer("ACTIVE", "ACCEPTED"), false);
   assert.equal(isMinimalHospitalOffer("HISTORY", "REJECTED"), false);
+  assert.equal(
+    isMinimalHospitalOffer("HISTORY", "REJECTED", "CANCELLED"),
+    true,
+  );
+  assert.equal(
+    isMinimalHospitalOffer("HISTORY", "ACCEPTED", "COMPLETED"),
+    true,
+  );
 });
 
 test("only exposes 06 timeline and exact location to contract-authorized offers", () => {
@@ -122,6 +150,8 @@ test("only exposes 06 timeline and exact location to contract-authorized offers"
   assert.equal(canReadHospitalLocation("ACCEPTED", false), false);
   assert.equal(canReadHospitalLocation("PENDING", false), false);
   assert.equal(canReadHospitalLocation("ACCEPTANCE_WITHDRAWN", false), false);
+  assert.equal(canReadClinicalTimeline("HISTORY", "REJECTED", "CANCELLED"), false);
+  assert.equal(canReadHospitalLocation("ACCEPTED", true, "COMPLETED"), false);
 });
 
 test("normalizes every withdrawal reason and validates OTHER detail", () => {
@@ -145,7 +175,7 @@ test("normalizes every withdrawal reason and validates OTHER detail", () => {
   assert.throws(() => createWithdrawalPayload("INVALID", null), /사유를 선택/);
 });
 
-test("maps every 04, 05, and 06 realtime signal to authoritative REST refreshes", () => {
+test("maps every 04 through 08 realtime signal to authoritative REST refreshes", () => {
   for (const type of [
     "TRANSPORT_REQUEST_RECEIVED",
     "ETA_UPDATED",
@@ -156,12 +186,24 @@ test("maps every 04, 05, and 06 realtime signal to authoritative REST refreshes"
     "CONSCIOUSNESS_CHANGED",
     "PRE_KTAS_CHANGED",
     "TREATMENT_ADDED",
+    "TRANSPORT_CANCELLED",
+    "HANDOFF_REQUESTED",
+    "HANDOFF_COMPLETED",
   ]) {
     assert.equal(shouldRefreshBothOfferLists(type), true);
   }
   assert.equal(shouldRefreshBothOfferLists("connected"), false);
   assert.equal(shouldRefreshBothOfferLists("heartbeat"), false);
   assert.equal(shouldRefreshBothOfferLists("AMBULANCE_LOCATION_UPDATED"), false);
+
+  for (const type of [
+    "TRANSPORT_CANCELLED",
+    "HANDOFF_REQUESTED",
+    "HANDOFF_COMPLETED",
+  ]) {
+    assert.equal(isTransportLifecycleRealtimeType(type), true);
+  }
+  assert.equal(isTransportLifecycleRealtimeType("ETA_UPDATED"), false);
 
   assert.equal(shouldRefreshSelectedOffer("ETA_UPDATED", "offer-1", "offer-1"), true);
   assert.equal(shouldRefreshSelectedOffer("ETA_UPDATED", "offer-2", "offer-1"), false);

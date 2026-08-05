@@ -32,6 +32,11 @@ export type WithdrawalReason =
   | "SPECIALIST_UNAVAILABLE"
   | "EQUIPMENT_UNAVAILABLE"
   | "OTHER";
+export type CancellationReason =
+  | "PATIENT_REFUSED_TRANSPORT"
+  | "GUARDIAN_SELF_TRANSPORT"
+  | "SCENE_RESOLVED"
+  | "OTHER";
 
 export type PageResult<T> = {
   items: T[];
@@ -50,6 +55,7 @@ export type HospitalOfferListItem = {
   offerStatus: OfferStatus;
   currentDestination: boolean;
   canWithdraw: boolean;
+  canConfirmHandoff: boolean;
   ageStatus: "EXACT" | "ESTIMATED" | "UNKNOWN" | null;
   ageYears: number | null;
   sex: "MALE" | "FEMALE" | "UNKNOWN" | null;
@@ -72,6 +78,10 @@ export type HospitalOfferListItem = {
   withdrawalReason: WithdrawalReason | null;
   withdrawalDetail: string | null;
   withdrawnAt: string | null;
+  handoffRequestedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  cancellationReason: CancellationReason | null;
 };
 
 export type VitalSignMeasurement = {
@@ -132,6 +142,7 @@ export type HospitalOfferDetail = {
   offerStatus: OfferStatus;
   currentDestination: boolean;
   canWithdraw: boolean;
+  canConfirmHandoff: boolean;
   patient: {
     ageStatus: "EXACT" | "ESTIMATED" | "UNKNOWN";
     ageYears: number | null;
@@ -176,6 +187,10 @@ export type HospitalOfferDetail = {
   withdrawalDetail: string | null;
   withdrawnAt: string | null;
   respondedAt: string | null;
+  handoffRequestedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  cancellationReason: CancellationReason | null;
   serverNow: string;
 };
 
@@ -256,6 +271,29 @@ export type HospitalAcceptanceWithdrawal = {
   idempotentReplay: boolean;
 };
 
+export type HospitalHandoffConfirmation = {
+  offerId: string;
+  transportRequestId: string;
+  status: "COMPLETED";
+  completedAt: string;
+  idempotentReplay: boolean;
+};
+
+export type HospitalProfile = {
+  accountId: string;
+  loginId: string;
+  role: "HOSPITAL_STAFF";
+  organizationId: string;
+  organizationName: string;
+  hospitalId: string;
+  address: string;
+  latitude: number;
+  longitude: number;
+  contact: string;
+  receivingStatus: "ON" | "OFF";
+  updatedAt: string;
+};
+
 type ErrorBody = {
   code?: string;
   message?: string;
@@ -332,6 +370,7 @@ export const hospitalApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  profile: () => request<HospitalProfile>("/api/ersync/hospitals/me"),
   setReceivingStatus: (status: "ON" | "OFF") =>
     request<{
       hospitalId: string;
@@ -390,6 +429,14 @@ export const hospitalApi = {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },
         body: JSON.stringify(payload),
+      },
+    ),
+  confirmHandoff: (offerId: string, idempotencyKey: string) =>
+    request<HospitalHandoffConfirmation>(
+      `/api/ersync/hospitals/me/offers/${encodeURIComponent(offerId)}/confirm-handoff`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
       },
     ),
 };
