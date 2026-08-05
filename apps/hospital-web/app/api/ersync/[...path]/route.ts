@@ -16,7 +16,10 @@ import { hospitalBackendHeaders } from "../../_lib/request-headers.js";
 
 type RouteContext = { params: Promise<{ path: string[] }> };
 
-const publicRoutes = new Set(["POST auth/signups/hospital"]);
+const publicRoutes = new Set([
+  "POST auth/invitations/validate",
+  "POST auth/signups/hospital",
+]);
 const offerIdPattern =
   "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 

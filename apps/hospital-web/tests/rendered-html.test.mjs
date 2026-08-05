@@ -110,6 +110,53 @@ test("hospital login always sends the fixed HOSPITAL_STAFF role", async () => {
   assert.equal((await response.json()).session.role, "HOSPITAL_STAFF");
 });
 
+test("validates a hospital invitation before signup without requiring a session", async () => {
+  let upstreamBody = null;
+  const response = await requestApp(
+    "/api/ersync/auth/invitations/validate",
+    {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ invitationCode: "Hospital-Code-Aa01" }),
+    },
+    async (input, init = {}) => {
+      const url = new URL(typeof input === "string" ? input : input.url);
+      assert.equal(url.pathname, "/api/v1/auth/invitations/validate");
+      assert.equal(new Headers(init.headers).get("authorization"), null);
+      upstreamBody = JSON.parse(init.body);
+      return Response.json({
+        organizationId: "11223344-5566-7788-99aa-bbccddeeff00",
+        organizationName: "ERSync 테스트병원",
+        role: "HOSPITAL_STAFF",
+        expiresAt: "2099-08-05T03:09:00Z",
+        requiredConsents: [],
+      });
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(upstreamBody, { invitationCode: "Hospital-Code-Aa01" });
+  assert.equal((await response.json()).role, "HOSPITAL_STAFF");
+});
+
+test("fails address search safely when server geocoding credentials are absent", async () => {
+  const previousId = process.env.ERSYNC_NAVER_MAPS_CLIENT_ID;
+  const previousSecret = process.env.ERSYNC_NAVER_MAPS_CLIENT_SECRET;
+  delete process.env.ERSYNC_NAVER_MAPS_CLIENT_ID;
+  delete process.env.ERSYNC_NAVER_MAPS_CLIENT_SECRET;
+
+  try {
+    const response = await requestApp("/api/geocode?query=서울대학교병원", {
+      headers: { accept: "application/json" },
+    });
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).code, "GEOCODING_NOT_CONFIGURED");
+  } finally {
+    if (previousId) process.env.ERSYNC_NAVER_MAPS_CLIENT_ID = previousId;
+    if (previousSecret) process.env.ERSYNC_NAVER_MAPS_CLIENT_SECRET = previousSecret;
+  }
+});
+
 test("does not expose paramedic assessment or transport APIs", async () => {
   const assessment = await requestApp("/api/ersync/assessment-protocols/active", {
     headers: { accept: "application/json" },

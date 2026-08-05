@@ -2404,3 +2404,971 @@ textarea:focus {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ERSync 병원 대시보드 최종 시안 정렬 */
+.support-details {
+  display: grid;
+  gap: 4px;
+  margin-top: 3px;
+  font-size: 11px;
+}
+
+.support-details summary {
+  width: max-content;
+  cursor: pointer;
+  font-weight: 750;
+  opacity: 0.75;
+}
+
+.support-details span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.signup-progress {
+  display: grid;
+  grid-template-columns: auto minmax(30px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 25px;
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.signup-progress i {
+  height: 1px;
+  background: var(--line);
+}
+
+.signup-progress span.active,
+.signup-progress span.complete {
+  color: var(--navy);
+}
+
+.signup-progress span.complete::before {
+  content: "✓ ";
+  color: var(--green);
+}
+
+.invitation-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 30px;
+}
+
+.verified-organization {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  padding: 17px 118px 17px 18px;
+  border: 1px solid #c8d8ec;
+  border-radius: 14px;
+  background: #f6f9fd;
+}
+
+.verified-organization > span {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.verified-organization > strong {
+  color: var(--navy);
+  font-size: 16px;
+}
+
+.verified-organization > button {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+}
+
+.field-error {
+  color: var(--red-dark);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+input[aria-invalid="true"] {
+  border-color: #ef9a9a;
+  background: #fffafa;
+}
+
+.address-field {
+  display: grid;
+  gap: 8px;
+}
+
+.field-label {
+  color: var(--slate);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.address-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.address-results {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+}
+
+.address-results button {
+  display: grid;
+  gap: 4px;
+  padding: 13px 15px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  color: var(--slate);
+  text-align: left;
+}
+
+.address-results button:last-child {
+  border-bottom: 0;
+}
+
+.address-results button:hover,
+.address-results button.selected {
+  background: #f5f8fc;
+}
+
+.address-results span {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.selected-address {
+  display: grid;
+  gap: 3px;
+  padding: 14px 15px;
+  border: 1px solid #bbdfc8;
+  border-radius: 13px;
+  background: var(--green-soft);
+  color: #087532;
+}
+
+.selected-address span,
+.selected-address small {
+  font-size: 11.5px;
+}
+
+.form-submit-error {
+  grid-column: 1 / -1;
+}
+
+.form-submit-error .notice {
+  margin-top: 0;
+}
+
+.topbar {
+  min-height: 72px;
+  padding: 12px 32px;
+}
+
+.receiving-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+}
+
+.receiving-toggle > span {
+  position: relative;
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: #c8ced6;
+  transition: background 150ms ease;
+}
+
+.receiving-toggle > span i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 150ms ease;
+}
+
+.receiving-toggle.on > span {
+  background: var(--green);
+}
+
+.receiving-toggle.on > span i {
+  transform: translateX(12px);
+}
+
+.receiving-toggle small {
+  font-size: 10.5px;
+  font-weight: 800;
+}
+
+.app-notice {
+  width: min(1440px, calc(100% - 64px));
+  margin: 0 auto;
+}
+
+.hospital-dashboard {
+  padding: 22px 32px 42px;
+  background: #f7f8fa;
+}
+
+.offer-workspace {
+  width: min(1440px, 100%);
+  min-height: calc(100vh - 136px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 390px);
+  gap: 18px;
+  margin: 0 auto;
+}
+
+.offer-primary,
+.offer-queue {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 8px 30px rgb(24 44 74 / 5%);
+}
+
+.offer-primary {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.offer-primary-empty {
+  min-height: 650px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  padding: 40px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.offer-primary-empty strong {
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.offer-primary-empty span {
+  max-width: 460px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.offer-primary-loading {
+  padding: 54px 30px;
+  color: var(--muted);
+  font-weight: 700;
+  text-align: center;
+}
+
+.patient-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 28px 30px 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ktas-badge {
+  width: 78px;
+  height: 78px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  border-radius: 20px;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.ktas-badge small {
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.ktas-badge strong {
+  font-size: 31px;
+  line-height: 1;
+}
+
+.ktas-1 {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.ktas-2 {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.ktas-3 {
+  background: #fffbeb;
+  color: #a16207;
+}
+
+.ktas-4,
+.ktas-5 {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.patient-hero-copy {
+  min-width: 0;
+}
+
+.patient-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.patient-hero-copy h1 {
+  margin: 0;
+  font-size: clamp(26px, 3vw, 38px);
+  letter-spacing: -1.4px;
+}
+
+.patient-hero-copy p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.patient-hero-meta {
+  display: grid;
+  justify-items: end;
+  gap: 7px;
+}
+
+.patient-hero-meta span {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.patient-hero-meta strong {
+  font-size: 16px;
+}
+
+.transport-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-bottom: 1px solid var(--line);
+  background: #fafbfc;
+}
+
+.transport-metrics > div {
+  display: grid;
+  gap: 3px;
+  padding: 22px 26px;
+  border-right: 1px solid var(--line);
+}
+
+.transport-metrics > div:last-child {
+  border-right: 0;
+}
+
+.transport-metrics small,
+.transport-metrics span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.transport-metrics strong {
+  color: var(--navy);
+  font-size: 24px;
+  letter-spacing: -0.7px;
+}
+
+.dashboard-clinical-section,
+.dashboard-detail-grid > section {
+  padding: 25px 30px;
+}
+
+.dashboard-section-title {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 15px;
+}
+
+.dashboard-section-title > div {
+  display: grid;
+  gap: 3px;
+}
+
+.dashboard-section-title span,
+.dashboard-section-title time {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dashboard-section-title h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.dashboard-vitals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.dashboard-vital {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+}
+
+.dashboard-vital span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dashboard-vital strong {
+  overflow-wrap: anywhere;
+  font-size: 15px;
+}
+
+.dashboard-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--line);
+}
+
+.dashboard-detail-grid > section + section {
+  border-left: 1px solid var(--line);
+}
+
+.dashboard-treatment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.dashboard-treatment-list span {
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: var(--navy-soft);
+  color: var(--navy);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dashboard-treatment-list p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.requester-summary {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+}
+
+.requester-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.requester-summary dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.requester-summary dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 750;
+  text-align: right;
+}
+
+.dashboard-decision-bar {
+  position: sticky;
+  z-index: 2;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  padding: 17px 30px;
+  border-top: 1px solid var(--line);
+  background: rgb(255 255 255 / 96%);
+  backdrop-filter: blur(10px);
+}
+
+.dashboard-decision-bar .button-primary,
+.dashboard-decision-bar .button-danger {
+  min-width: 145px;
+}
+
+.offer-history-summary {
+  display: grid;
+  justify-items: start;
+  gap: 16px;
+  padding: 38px;
+}
+
+.offer-history-summary h1,
+.offer-history-summary p {
+  margin: 0;
+}
+
+.offer-history-summary p {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.offer-history-summary dl {
+  width: min(620px, 100%);
+  margin: 0;
+  border-top: 1px solid var(--line);
+}
+
+.offer-history-summary dl div {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 16px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.offer-history-summary dt {
+  color: var(--muted);
+}
+
+.offer-history-summary dd {
+  margin: 0;
+  font-weight: 750;
+}
+
+.offer-queue {
+  min-width: 0;
+  min-height: 650px;
+  align-self: start;
+  overflow: hidden;
+}
+
+.offer-queue-head {
+  align-items: center;
+  padding: 20px;
+  background: #fff;
+}
+
+.offer-queue-head h1 {
+  margin-top: 5px;
+  font-size: 20px;
+}
+
+.offer-queue .stream-chip {
+  padding: 6px 8px;
+  font-size: 10px;
+}
+
+.offer-queue .offer-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(max-content, 1fr));
+  gap: 4px;
+  overflow-x: auto;
+  padding: 10px 12px;
+}
+
+.offer-queue .offer-tabs button {
+  padding: 8px 7px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.offer-queue .offer-tabs .offer-refresh {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 6px;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.offer-queue .offer-list {
+  gap: 8px;
+  max-height: calc(100vh - 274px);
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.offer-queue .offer-card {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px 11px;
+  padding: 14px;
+  border-radius: 13px;
+}
+
+.offer-queue .offer-card.selected {
+  border-color: #8da8cb;
+  background: #f6f9fd;
+  box-shadow: inset 3px 0 0 var(--navy);
+}
+
+.offer-queue .offer-card-statuses {
+  grid-row: 1 / 3;
+}
+
+.offer-queue .offer-card-main {
+  grid-column: 2;
+}
+
+.offer-queue .offer-card-route {
+  grid-column: 2;
+}
+
+.offer-queue .offer-card-meta {
+  grid-column: 2 / 4;
+  justify-items: start;
+}
+
+.offer-queue .offer-card-meta span:nth-child(n + 2) {
+  display: none;
+}
+
+.offer-queue .offer-card-arrow {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.offer-queue .offer-empty {
+  min-height: 440px;
+  padding: 25px;
+}
+
+.offer-queue .offer-empty .empty-symbol {
+  width: 54px;
+  height: 54px;
+  border-radius: 17px;
+  font-size: 14px;
+}
+
+.offer-queue .offer-empty strong {
+  font-size: 15px;
+}
+
+.offer-queue .offer-empty span {
+  font-size: 12px;
+}
+
+.confirmation-dialog {
+  width: min(450px, 100%);
+  padding: 30px;
+  border-radius: 19px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.confirmation-dialog h2 {
+  margin: 10px 0 0;
+  font-size: 24px;
+}
+
+.confirmation-dialog p {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.confirmation-actions {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.account-layout {
+  width: min(1120px, calc(100% - 64px));
+  max-width: none;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 20px;
+  margin: 0 auto;
+  padding: 34px 0 60px;
+}
+
+.account-card,
+.account-settings-card {
+  padding: 30px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+}
+
+.account-settings-card {
+  align-self: start;
+}
+
+.account-settings-card h2 {
+  margin: 10px 0 0;
+  font-size: 22px;
+}
+
+.account-settings-card > p {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.account-receiving-control {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 24px;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fafbfc;
+  color: var(--slate);
+  text-align: left;
+}
+
+.account-receiving-control > span {
+  display: grid;
+  gap: 4px;
+}
+
+.account-receiving-control small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.account-receiving-control > i {
+  position: relative;
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  background: #c8ced6;
+}
+
+.account-receiving-control > i b {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 150ms ease;
+}
+
+.account-receiving-control.on > i {
+  background: var(--green);
+}
+
+.account-receiving-control.on > i b {
+  transform: translateX(20px);
+}
+
+.account-status-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 15px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1120px) {
+  .offer-workspace {
+    grid-template-columns: minmax(0, 1fr) 330px;
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+  }
+
+  .account-mini {
+    display: none;
+  }
+
+  .dashboard-vitals {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .hospital-dashboard {
+    padding: 14px;
+  }
+
+  .offer-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .offer-queue {
+    grid-row: 1;
+    min-height: auto;
+  }
+
+  .offer-queue .offer-list {
+    max-height: 380px;
+  }
+
+  .offer-primary {
+    grid-row: 2;
+  }
+
+  .patient-hero {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .patient-hero-meta {
+    grid-column: 2;
+    justify-items: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .auth-card-wide {
+    padding-bottom: 52px;
+  }
+
+  .verified-organization {
+    padding-right: 18px;
+  }
+
+  .verified-organization > button {
+    position: static;
+    width: max-content;
+    margin-top: 5px;
+    transform: none;
+  }
+
+  .address-search,
+  .confirmation-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    min-height: auto;
+  }
+
+  .topbar .topbar-divider,
+  .clock,
+  .live-chip {
+    display: none;
+  }
+
+  .facility-title {
+    order: 2;
+    width: calc(100% - 94px);
+  }
+
+  .receiving-toggle {
+    margin-left: auto;
+  }
+
+  .topnav {
+    order: 3;
+    width: 100%;
+    margin: 0;
+  }
+
+  .topnav button {
+    flex: 1;
+  }
+
+  .app-notice {
+    width: calc(100% - 28px);
+  }
+
+  .patient-hero {
+    grid-template-columns: auto minmax(0, 1fr);
+    padding: 22px 18px;
+  }
+
+  .ktas-badge {
+    width: 64px;
+    height: 64px;
+    border-radius: 17px;
+  }
+
+  .patient-hero-copy h1 {
+    font-size: 25px;
+  }
+
+  .transport-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .transport-metrics > div {
+    padding: 15px 18px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .transport-metrics > div:last-child {
+    border-bottom: 0;
+  }
+
+  .dashboard-clinical-section,
+  .dashboard-detail-grid > section {
+    padding: 20px 18px;
+  }
+
+  .dashboard-vitals,
+  .dashboard-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-detail-grid > section + section {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .dashboard-decision-bar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 14px 18px;
+  }
+
+  .dashboard-decision-bar .button:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .dashboard-decision-bar .button-primary,
+  .dashboard-decision-bar .button-danger {
+    min-width: 0;
+  }
+
+  .account-layout {
+    width: calc(100% - 28px);
+    grid-template-columns: 1fr;
+    padding-top: 18px;
+  }
+}

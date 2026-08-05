@@ -4,8 +4,10 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   errorMessage,
+  GeocodedAddress,
   hospitalApi,
   HospitalProfile,
+  InvitationValidation,
   Session,
   sessionApi,
 } from "./lib/api";
@@ -20,10 +22,24 @@ import { HospitalOffers } from "./components/HospitalOffers";
 type AuthView = "login" | "signup";
 type HospitalView = "dashboard" | "account";
 
-function isCoordinateInRange(value: string, min: number, max: number) {
-  if (!value.trim()) return false;
-  const coordinate = Number(value);
-  return Number.isFinite(coordinate) && coordinate >= min && coordinate <= max;
+function friendlyErrorMessage(error: unknown) {
+  if (!(error instanceof ApiError)) return errorMessage(error);
+
+  const messages: Record<string, string> = {
+    AUTH_004: "아이디 또는 비밀번호가 올바르지 않습니다.",
+    USER_002: "사용할 수 없는 계정입니다. 관리자에게 문의해 주세요.",
+    USER_003: "이미 사용 중인 아이디입니다.",
+    INVITATION_001: "가입 코드를 찾을 수 없습니다. 코드를 다시 확인해 주세요.",
+    INVITATION_002: "이미 사용된 가입 코드입니다. 새 코드를 발급받아 주세요.",
+    INVITATION_003: "만료된 가입 코드입니다. 새 코드를 발급받아 주세요.",
+    INVITATION_004: "사용할 수 없는 가입 코드입니다. 관리자에게 문의해 주세요.",
+    GEOCODING_NOT_CONFIGURED:
+      "주소 검색이 아직 설정되지 않았습니다. 관리자에게 문의해 주세요.",
+    GEOCODING_UPSTREAM_ERROR:
+      "주소 검색을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+  };
+
+  return messages[error.code] || error.message || "요청을 처리하지 못했습니다.";
 }
 
 function ErrorNotice({ error }: { error: unknown }) {
@@ -32,13 +48,13 @@ function ErrorNotice({ error }: { error: unknown }) {
 
   return (
     <div className="notice notice-error" role="alert">
-      <strong>{errorMessage(error)}</strong>
-      {apiError?.traceId ? (
-        <span>
-          오류 코드 {apiError.code} · 문의용 traceId {apiError.traceId}
-        </span>
-      ) : apiError?.code ? (
-        <span>오류 코드 {apiError.code}</span>
+      <strong>{friendlyErrorMessage(error)}</strong>
+      {apiError?.code ? (
+        <details className="support-details">
+          <summary>문의 정보</summary>
+          <span>오류 코드 {apiError.code}</span>
+          {apiError.traceId ? <span>traceId {apiError.traceId}</span> : null}
+        </details>
       ) : null}
     </div>
   );
@@ -95,6 +111,7 @@ function AuthScreen({
       setView("login");
     } catch (nextError) {
       setError(nextError);
+      throw nextError;
     } finally {
       setBusy(false);
     }
@@ -119,8 +136,6 @@ function AuthScreen({
                 <span>{signupComplete}</span>
               </div>
             ) : null}
-            <ErrorNotice error={error} />
-
             <form className="form-stack auth-form" onSubmit={login}>
               <label>
                 <span>아이디</span>
@@ -150,6 +165,7 @@ function AuthScreen({
               <button className="button button-primary button-large" disabled={busy}>
                 {busy ? "로그인 중…" : "로그인"}
               </button>
+              <ErrorNotice error={error} />
             </form>
 
             <div className="auth-footer">
@@ -162,7 +178,6 @@ function AuthScreen({
         ) : (
           <HospitalSignup
             busy={busy}
-            error={error}
             onBack={() => {
               setError(null);
               setView("login");
@@ -177,63 +192,173 @@ function AuthScreen({
 
 function HospitalSignup({
   busy,
-  error,
   onBack,
   onSubmit,
 }: {
   busy: boolean;
-  error: unknown;
   onBack: () => void;
   onSubmit: (payload: Parameters<typeof hospitalApi.signup>[0]) => Promise<void>;
 }) {
+  const [step, setStep] = useState<"code" | "details">("code");
+  const [validation, setValidation] = useState<InvitationValidation | null>(null);
+  const [checkingCode, setCheckingCode] = useState(false);
+  const [codeError, setCodeError] = useState<unknown>(null);
   const [form, setForm] = useState({
     invitationCode: "",
-    organizationName: "",
     loginId: "",
     password: "",
-    address: "",
-    latitude: "",
-    longitude: "",
     contact: "",
   });
+  const [addressQuery, setAddressQuery] = useState("");
+  const [addressResults, setAddressResults] = useState<GeocodedAddress[]>([]);
+  const [selectedAddress, setSelectedAddress] = useState<GeocodedAddress | null>(
+    null,
+  );
+  const [searchingAddress, setSearchingAddress] = useState(false);
+  const [addressError, setAddressError] = useState<unknown>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [submitError, setSubmitError] = useState<unknown>(null);
   const [contactSharingConsentAccepted, setContactSharingConsentAccepted] =
     useState(false);
 
   const update = (key: keyof typeof form, value: string) =>
     setForm((current) => ({ ...current, [key]: value }));
 
-  const canSubmit =
-    form.invitationCode.trim().length > 0 &&
-    form.organizationName.trim().length > 0 &&
-    form.organizationName.trim().length <= 100 &&
-    /^[a-z0-9]{4,30}$/.test(form.loginId.trim()) &&
-    form.password.length >= 8 &&
-    form.password.length <= 64 &&
-    form.address.trim().length > 0 &&
-    form.address.trim().length <= 255 &&
-    isCoordinateInRange(form.latitude, -90, 90) &&
-    isCoordinateInRange(form.longitude, -180, 180) &&
-    isValidHospitalContact(form.contact) &&
-    contactSharingConsentAccepted;
+  const applySignupError = (nextError: unknown) => {
+    if (!(nextError instanceof ApiError)) {
+      setSubmitError(nextError);
+      return;
+    }
 
-  const submit = (event: FormEvent) => {
+    if (nextError.code === "USER_003") {
+      setFieldErrors((current) => ({
+        ...current,
+        loginId: "이미 사용 중인 아이디입니다.",
+      }));
+      return;
+    }
+
+    if (nextError.code.startsWith("INVITATION_")) {
+      setValidation(null);
+      setStep("code");
+      setCodeError(nextError);
+      return;
+    }
+
+    if (nextError.code === "COMMON_001") {
+      const next: Record<string, string> = {};
+      nextError.fieldErrors.forEach((fieldError) => {
+        const field = fieldError.field || fieldError.fieldName;
+        if (field) next[field] = fieldError.message || "입력값을 확인해 주세요.";
+      });
+      setFieldErrors(next);
+      if (Object.keys(next).length === 0) setSubmitError(nextError);
+      return;
+    }
+
+    setSubmitError(nextError);
+  };
+
+  const checkInvitation = async (event: FormEvent) => {
     event.preventDefault();
-    if (!canSubmit) return;
-    void onSubmit(
-      createHospitalSignupRequest(
+    const invitationCode = form.invitationCode.trim();
+    setCodeError(null);
+
+    if (!invitationCode) {
+      setCodeError(new Error("가입 코드를 입력해 주세요."));
+      return;
+    }
+
+    setCheckingCode(true);
+    try {
+      const result = await hospitalApi.validateInvitation(invitationCode);
+      if (result.role !== "HOSPITAL_STAFF") {
+        setCodeError(
+          new Error("병원 계정용 가입 코드가 아닙니다. 발급처에 확인해 주세요."),
+        );
+        return;
+      }
+      setValidation(result);
+      setForm((current) => ({ ...current, invitationCode }));
+      setStep("details");
+    } catch (nextError) {
+      setCodeError(nextError);
+    } finally {
+      setCheckingCode(false);
+    }
+  };
+
+  const searchAddress = async () => {
+    const query = addressQuery.trim();
+    setAddressError(null);
+    setAddressResults([]);
+    setSelectedAddress(null);
+
+    if (query.length < 2) {
+      setAddressError(new Error("주소를 두 글자 이상 입력해 주세요."));
+      return;
+    }
+
+    setSearchingAddress(true);
+    try {
+      const result = await hospitalApi.geocode(query);
+      setAddressResults(result.items);
+      if (result.items.length === 0) {
+        setAddressError(
+          new Error("검색 결과가 없습니다. 도로명이나 건물명을 다시 확인해 주세요."),
+        );
+      }
+    } catch (nextError) {
+      setAddressError(nextError);
+    } finally {
+      setSearchingAddress(false);
+    }
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const nextErrors: Record<string, string> = {};
+    if (!/^[a-z0-9]{4,30}$/.test(form.loginId.trim())) {
+      nextErrors.loginId = "영문 소문자와 숫자로 4~30자 입력해 주세요.";
+    }
+    if (form.password.length < 8 || form.password.length > 64) {
+      nextErrors.password = "비밀번호를 8~64자로 입력해 주세요.";
+    }
+    if (!selectedAddress) {
+      nextErrors.address = "검색 결과에서 응급실 주소를 선택해 주세요.";
+    }
+    if (!isValidHospitalContact(form.contact)) {
+      nextErrors.contact = "연락처 형식을 확인해 주세요. 예: 02-1234-5678";
+    }
+    if (!contactSharingConsentAccepted) {
+      nextErrors.consent = "필수 동의 내용을 확인하고 체크해 주세요.";
+    }
+    setFieldErrors(nextErrors);
+    setSubmitError(null);
+
+    if (Object.keys(nextErrors).length > 0 || !validation || !selectedAddress) {
+      return;
+    }
+
+    try {
+      await onSubmit(
+        createHospitalSignupRequest(
         {
-          invitationCode: form.invitationCode.trim(),
-          organizationName: form.organizationName.trim(),
+          invitationCode: form.invitationCode,
+          organizationName: validation.organizationName,
           loginId: form.loginId.trim().toLowerCase(),
           password: form.password,
-          address: form.address.trim(),
-          latitude: Number(form.latitude),
-          longitude: Number(form.longitude),
+          address: selectedAddress.roadAddress,
+          latitude: selectedAddress.latitude,
+          longitude: selectedAddress.longitude,
           contact: form.contact,
         },
-        contactSharingConsentAccepted,
-      ),
-    );
+          contactSharingConsentAccepted,
+        ),
+      );
+    } catch (nextError) {
+      applySignupError(nextError);
+    }
   };
 
   return (
@@ -243,30 +368,59 @@ function HospitalSignup({
       </button>
       <h1 className="signup-title">병원 공용 계정 만들기</h1>
       <p className="auth-subtitle">
-        관리자가 발급한 일회용 가입 코드와 응급실 정보를 입력해 주세요.
+        {step === "code"
+          ? "먼저 관리자가 발급한 일회용 가입 코드를 확인해 주세요."
+          : "확인된 병원의 응급실 정보와 로그인 정보를 입력해 주세요."}
       </p>
-      <ErrorNotice error={error} />
 
-      <form className="signup-grid" onSubmit={submit}>
-        <label className="field-span-2">
-          <span>가입 코드</span>
-          <input
-            autoComplete="off"
-            required
-            value={form.invitationCode}
-            onChange={(event) => update("invitationCode", event.target.value)}
-          />
-        </label>
-        <label className="field-span-2">
-          <span>조직명</span>
-          <input
-            maxLength={100}
-            placeholder="가입 코드에 연결된 병원명과 정확히 일치해야 합니다."
-            required
-            value={form.organizationName}
-            onChange={(event) => update("organizationName", event.target.value)}
-          />
-        </label>
+      <div className="signup-progress" aria-label="회원가입 단계">
+        <span className={step === "code" ? "active" : "complete"}>1 가입 코드</span>
+        <i />
+        <span className={step === "details" ? "active" : ""}>2 계정 정보</span>
+      </div>
+
+      {step === "code" ? (
+        <form className="invitation-form" onSubmit={checkInvitation}>
+          <label>
+            <span>가입 코드</span>
+            <input
+              autoComplete="off"
+              autoFocus
+              placeholder="대소문자를 구분해 입력해 주세요"
+              value={form.invitationCode}
+              onChange={(event) => update("invitationCode", event.target.value)}
+            />
+            <small className="field-hint">
+              코드는 확인 단계에서 소모되지 않으며, 계정 생성이 완료될 때 한 번만
+              사용됩니다.
+            </small>
+          </label>
+          <ErrorNotice error={codeError} />
+          <button
+            className="button button-primary button-large"
+            disabled={checkingCode}
+            type="submit"
+          >
+            {checkingCode ? "가입 코드 확인 중…" : "가입 코드 확인"}
+          </button>
+        </form>
+      ) : (
+      <form className="signup-grid" onSubmit={submit} noValidate>
+        <section className="verified-organization field-span-2">
+          <span>가입할 병원</span>
+          <strong>{validation?.organizationName}</strong>
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => {
+              setStep("code");
+              setValidation(null);
+              setCodeError(null);
+            }}
+          >
+            다른 코드 확인
+          </button>
+        </section>
         <label>
           <span>로그인 아이디</span>
           <input
@@ -277,11 +431,18 @@ function HospitalSignup({
             placeholder="영문 소문자·숫자"
             required
             value={form.loginId}
-            onChange={(event) => update("loginId", event.target.value.toLowerCase())}
+            aria-invalid={Boolean(fieldErrors.loginId)}
+            onChange={(event) => {
+              update("loginId", event.target.value.toLowerCase());
+              setFieldErrors((current) => ({ ...current, loginId: "" }));
+            }}
           />
           <small className="field-hint">
             아이디는 영문 소문자와 숫자만 가능하며, 대문자는 자동으로 소문자로 바뀝니다.
           </small>
+          {fieldErrors.loginId ? (
+            <small className="field-error" role="alert">{fieldErrors.loginId}</small>
+          ) : null}
         </label>
         <label>
           <span>비밀번호</span>
@@ -293,52 +454,78 @@ function HospitalSignup({
             required
             type="password"
             value={form.password}
-            onChange={(event) => update("password", event.target.value)}
+            aria-invalid={Boolean(fieldErrors.password)}
+            onChange={(event) => {
+              update("password", event.target.value);
+              setFieldErrors((current) => ({ ...current, password: "" }));
+            }}
           />
           <small className="field-hint">
             8~64자로 입력해 주세요. 영문 대·소문자, 숫자와 특수문자를 사용할 수 있습니다.
           </small>
+          {fieldErrors.password ? (
+            <small className="field-error" role="alert">{fieldErrors.password}</small>
+          ) : null}
         </label>
-        <label className="field-span-2">
-          <span>주소</span>
-          <input
-            maxLength={255}
-            required
-            value={form.address}
-            onChange={(event) => update("address", event.target.value)}
-          />
-        </label>
-        <label>
-          <span>위도</span>
-          <input
-            max="90"
-            min="-90"
-            required
-            step="any"
-            type="number"
-            value={form.latitude}
-            onChange={(event) => update("latitude", event.target.value)}
-          />
-        </label>
-        <label>
-          <span>경도</span>
-          <input
-            max="180"
-            min="-180"
-            required
-            step="any"
-            type="number"
-            value={form.longitude}
-            onChange={(event) => update("longitude", event.target.value)}
-          />
-        </label>
-        <div className="location-help field-span-2">
-          <strong>위도와 경도는 왜 필요한가요?</strong>
-          <span>
-            병원 응급실의 위치를 저장하는 필수 정보입니다. 향후 가까운 병원 검색과
-            지도 표시, 이송 거리 계산에 사용됩니다.
-          </span>
-        </div>
+        <section className="address-field field-span-2" aria-labelledby="address-title">
+          <span id="address-title" className="field-label">응급실 주소</span>
+          <div className="address-search">
+            <input
+              aria-invalid={Boolean(fieldErrors.address)}
+              maxLength={200}
+              placeholder="도로명, 건물명 또는 병원명"
+              value={addressQuery}
+              onChange={(event) => {
+                setAddressQuery(event.target.value);
+                setSelectedAddress(null);
+                setAddressResults([]);
+                setAddressError(null);
+                setFieldErrors((current) => ({ ...current, address: "" }));
+              }}
+            />
+            <button
+              className="button button-muted"
+              disabled={searchingAddress}
+              type="button"
+              onClick={() => void searchAddress()}
+            >
+              {searchingAddress ? "검색 중…" : "주소 검색"}
+            </button>
+          </div>
+          {addressResults.length > 0 ? (
+            <div className="address-results" role="listbox" aria-label="주소 검색 결과">
+              {addressResults.map((address) => (
+                <button
+                  key={`${address.roadAddress}-${address.latitude}-${address.longitude}`}
+                  className={selectedAddress === address ? "selected" : ""}
+                  type="button"
+                  onClick={() => {
+                    setSelectedAddress(address);
+                    setAddressQuery(address.roadAddress);
+                    setAddressResults([]);
+                    setFieldErrors((current) => ({ ...current, address: "" }));
+                  }}
+                >
+                  <strong>{address.roadAddress}</strong>
+                  {address.jibunAddress && address.jibunAddress !== address.roadAddress ? (
+                    <span>{address.jibunAddress}</span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {selectedAddress ? (
+            <div className="selected-address" role="status">
+              <span>선택한 응급실 위치</span>
+              <strong>{selectedAddress.roadAddress}</strong>
+              <small>병원 탐색과 이송 거리 계산에 필요한 위치가 함께 저장됩니다.</small>
+            </div>
+          ) : null}
+          {fieldErrors.address ? (
+            <small className="field-error" role="alert">{fieldErrors.address}</small>
+          ) : null}
+          <ErrorNotice error={addressError} />
+        </section>
         <label className="field-span-2">
           <span>응급실 연락처</span>
           <input
@@ -350,11 +537,18 @@ function HospitalSignup({
             required
             title="숫자 또는 +로 시작하고, 이후에는 숫자와 하이픈만 7~29자 입력해 주세요."
             value={form.contact}
-            onChange={(event) => update("contact", event.target.value)}
+            aria-invalid={Boolean(fieldErrors.contact)}
+            onChange={(event) => {
+              update("contact", event.target.value);
+              setFieldErrors((current) => ({ ...current, contact: "" }));
+            }}
           />
           <small className="field-hint">
             숫자 또는 +로 시작해 숫자와 하이픈만 입력해 주세요. 예: 02-1234-5678
           </small>
+          {fieldErrors.contact ? (
+            <small className="field-error" role="alert">{fieldErrors.contact}</small>
+          ) : null}
         </label>
         <section
           aria-labelledby="contact-sharing-consent-title"
@@ -378,33 +572,36 @@ function HospitalSignup({
           <label className="consent-check">
             <input
               checked={contactSharingConsentAccepted}
-              onChange={(event) =>
-                setContactSharingConsentAccepted(event.target.checked)
-              }
+              onChange={(event) => {
+                setContactSharingConsentAccepted(event.target.checked);
+                setFieldErrors((current) => ({ ...current, consent: "" }));
+              }}
               required
               type="checkbox"
             />
             <span>위 연락처 수집 및 구급대원 제공에 동의합니다. (필수)</span>
           </label>
+          {fieldErrors.consent ? (
+            <small className="field-error" role="alert">{fieldErrors.consent}</small>
+          ) : null}
         </section>
-        {error instanceof ApiError && error.code === "COMMON_001" ? (
-          <p className="validation-help field-span-2" role="status">
-            입력 항목과 연락처 형식, 동의 체크 및 문구 버전을 다시 확인해 주세요.
-          </p>
-        ) : null}
         <div className="form-actions field-span-2">
           <button className="button button-muted" type="button" onClick={onBack}>
             취소
           </button>
           <button
             className="button button-primary"
-            disabled={busy || !canSubmit}
+            disabled={busy}
             type="submit"
           >
             {busy ? "계정 생성 중…" : "병원 계정 만들기"}
           </button>
+          <div className="form-submit-error">
+            <ErrorNotice error={submitError} />
+          </div>
         </div>
       </form>
+      )}
     </>
   );
 }
@@ -543,6 +740,17 @@ function HospitalApp({
               ? "수신 일시 중지"
               : "수신 상태 확인 필요"}
         </div>
+        <button
+          aria-label={live ? "신규 요청 수신 끄기" : "신규 요청 수신 켜기"}
+          aria-pressed={live}
+          className={`receiving-toggle ${live ? "on" : "off"}`}
+          disabled={changing || profileLoading || !profile}
+          onClick={() => void setStatus(live ? "OFF" : "ON")}
+          type="button"
+        >
+          <span><i /></span>
+          <small>{changing ? "변경 중" : `요청 수신 ${live ? "ON" : "OFF"}`}</small>
+        </button>
         <nav className="topnav" aria-label="병원 메뉴">
           <button
             className={view === "dashboard" ? "active" : ""}
@@ -563,59 +771,16 @@ function HospitalApp({
           <span>{(profile?.loginId || session.loginId || "병").slice(0, 1).toUpperCase()}</span>
           <div>
             <strong>{profile?.loginId || session.loginId || "병원 계정"}</strong>
-            <small>HOSPITAL STAFF</small>
+            <small>병원 공용 계정</small>
           </div>
         </div>
       </header>
 
-      {view === "dashboard" ? (
-        <section className="dashboard-grid">
-          <HospitalOffers onSessionExpired={onSessionExpired} />
+      {error ? <div className="app-notice"><ErrorNotice error={error} /></div> : null}
 
-          <aside className="receiving-card">
-            <span className="eyebrow">신규 요청 수신</span>
-            <h2>
-              {live
-                ? "구급대 요청을 받고 있어요"
-                : receiving === "OFF"
-                  ? "현재 요청을 받지 않아요"
-                  : "수신 상태를 선택해 주세요"}
-            </h2>
-            <p>
-              OFF로 변경해도 이미 수락했거나 이동 중인 요청은 유지됩니다. 현재
-              표시는 서버에 저장된 실제 상태입니다.
-            </p>
-            <div className="status-selector" aria-label="수신 상태 변경">
-              <button
-                className={receiving === "ON" ? "selected status-on" : ""}
-                disabled={changing || profileLoading || !profile}
-                onClick={() => void setStatus("ON")}
-              >
-                <span>ON</span>
-                <small>신규 요청 수신</small>
-              </button>
-              <button
-                className={receiving === "OFF" ? "selected status-off" : ""}
-                disabled={changing || profileLoading || !profile}
-                onClick={() => void setStatus("OFF")}
-              >
-                <span>OFF</span>
-                <small>신규 요청 제외</small>
-              </button>
-            </div>
-            {profileLoading ? (
-              <div className="inline-loading">서버 수신 상태 확인 중…</div>
-            ) : changing ? (
-              <div className="inline-loading">상태 변경 중…</div>
-            ) : null}
-            <ErrorNotice error={error} />
-            <div className="status-footnote">
-              <span className={`status-dot status-dot-${receiving.toLowerCase()}`} />
-              {receiving === "UNKNOWN"
-                ? "서버의 현재 수신 상태를 확인하지 못했습니다."
-                : `서버 최종 상태 · 수신 ${receiving}`}
-            </div>
-          </aside>
+      {view === "dashboard" ? (
+        <section className="hospital-dashboard">
+          <HospitalOffers onSessionExpired={onSessionExpired} />
         </section>
       ) : (
         <section className="account-layout">
@@ -629,8 +794,8 @@ function HospitalApp({
             </div>
             <dl className="detail-list">
               <div>
-                <dt>역할</dt>
-                <dd>병원 관계자</dd>
+                <dt>계정 유형</dt>
+                <dd>병원 공용 계정</dd>
               </div>
               <div>
                 <dt>응급실 주소</dt>
@@ -641,61 +806,49 @@ function HospitalApp({
                 <dd>{profile?.contact || "-"}</dd>
               </div>
               <div>
-                <dt>응급실 좌표</dt>
-                <dd>
-                  {profile
-                    ? `${profile.latitude.toFixed(6)}, ${profile.longitude.toFixed(6)}`
-                    : "-"}
-                </dd>
-              </div>
-              <div>
-                <dt>서버 수신 상태</dt>
-                <dd>{receiving === "UNKNOWN" ? "확인 필요" : receiving}</dd>
-              </div>
-              <div>
-                <dt>프로필 갱신 시각</dt>
-                <dd>{profile ? formatDate(profile.updatedAt) : "-"}</dd>
-              </div>
-              <div>
-                <dt>Access Token 만료</dt>
-                <dd>{formatDate(session.accessTokenExpiresAt)}</dd>
+                <dt>현재 업무 상태</dt>
+                <dd>{live ? "신규 이송 요청 수신 중" : "신규 요청 수신 일시 중지"}</dd>
               </div>
             </dl>
             <button className="button button-danger button-full" onClick={onLogout}>
               로그아웃
             </button>
           </div>
-          <div className="info-card">
-            <span className="eyebrow">연동 상태</span>
-            <h2>기능 1~6 및 인증 보완 계약 연결 완료</h2>
-            <ul className="check-list">
-              <li>응급실 연락처와 필수 제공 동의가 포함된 병원 가입</li>
-              <li>병원 로그인과 토큰 자동 교체</li>
-              <li>인증된 병원의 수신 ON/OFF 변경</li>
-              <li>병원 제안 목록·상세와 수락·거절 응답</li>
-              <li>현재 목적지 표시와 병원 수락 철회</li>
-              <li>실제 도로 거리·ETA와 실시간 상태 갱신</li>
-              <li>인계 확인과 완료·취소 이력 보호</li>
-              <li>서버 기준 병원 정보와 수신 상태 복구</li>
-              <li>병원 역할이 고정된 로그인 요청</li>
-              <li>인증 만료·비활성 계정 자동 로그아웃</li>
-            </ul>
+          <div className="account-settings-card">
+            <span className="eyebrow">업무 설정</span>
+            <h2>신규 이송 요청 수신</h2>
             <p>
-              병상, 진료과와 이후 알림 기능은 해당 백엔드 문서가 전달될 때
-              순차적으로 연결됩니다.
+              수신을 끄면 새로운 병원 탐색 후보에서만 제외됩니다. 이미 수락했거나
+              이송 중인 요청은 그대로 유지됩니다.
             </p>
+            <button
+              aria-pressed={live}
+              className={`account-receiving-control ${live ? "on" : "off"}`}
+              disabled={changing || profileLoading || !profile}
+              onClick={() => void setStatus(live ? "OFF" : "ON")}
+              type="button"
+            >
+              <span>
+                <strong>{live ? "수신 중" : "수신 안 함"}</strong>
+                <small>서버에 저장된 실제 상태</small>
+              </span>
+              <i><b /></i>
+            </button>
+            <div className="account-status-note">
+              <span className={`status-dot status-dot-${receiving.toLowerCase()}`} />
+              {profileLoading
+                ? "서버 상태를 확인하고 있습니다."
+                : changing
+                  ? "수신 상태를 변경하고 있습니다."
+                  : live
+                    ? "새 이송 요청을 실시간으로 받고 있습니다."
+                    : "새 이송 요청 수신이 일시 중지되었습니다."}
+            </div>
           </div>
         </section>
       )}
     </main>
   );
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("ko-KR", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
 }
 
 export default function Home() {

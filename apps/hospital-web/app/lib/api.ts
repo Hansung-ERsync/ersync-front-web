@@ -294,10 +294,34 @@ export type HospitalProfile = {
   updatedAt: string;
 };
 
+export type InvitationValidation = {
+  organizationId: string;
+  organizationName: string;
+  role: Role;
+  expiresAt: string;
+  requiredConsents: {
+    type: string;
+    policyVersion: string;
+  }[];
+};
+
+export type GeocodedAddress = {
+  roadAddress: string;
+  jibunAddress: string;
+  latitude: number;
+  longitude: number;
+};
+
+export type FieldError = {
+  field?: string;
+  fieldName?: string;
+  message?: string;
+};
+
 type ErrorBody = {
   code?: string;
   message?: string;
-  fieldErrors?: unknown[];
+  fieldErrors?: FieldError[];
   traceId?: string | null;
 };
 
@@ -305,7 +329,7 @@ export class ApiError extends Error {
   status: number;
   code: string;
   traceId: string | null;
-  fieldErrors: unknown[];
+  fieldErrors: FieldError[];
 
   constructor(status: number, body: ErrorBody) {
     super(body.message || "요청을 처리하지 못했습니다.");
@@ -347,6 +371,11 @@ export const sessionApi = {
 };
 
 export const hospitalApi = {
+  validateInvitation: (invitationCode: string) =>
+    request<InvitationValidation>("/api/ersync/auth/invitations/validate", {
+      method: "POST",
+      body: JSON.stringify({ invitationCode }),
+    }),
   signup: (payload: {
     invitationCode: string;
     organizationName: string;
@@ -370,6 +399,10 @@ export const hospitalApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  geocode: (query: string) =>
+    request<{ items: GeocodedAddress[] }>(
+      `/api/geocode?query=${encodeURIComponent(query)}`,
+    ),
   profile: () => request<HospitalProfile>("/api/ersync/hospitals/me"),
   setReceivingStatus: (status: "ON" | "OFF") =>
     request<{
