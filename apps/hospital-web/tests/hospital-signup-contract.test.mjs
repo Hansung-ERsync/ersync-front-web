@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   CONTACT_SHARING_CONSENT_VERSION,
+  INVITATION_ERROR_MESSAGES,
   createHospitalSignupRequest,
   isValidHospitalContact,
   normalizeHospitalContact,
@@ -45,4 +46,19 @@ test("rejects missing consent and out-of-contract contacts", () => {
   assert.equal(isValidHospitalContact("02 1234 5678"), false);
   assert.equal(isValidHospitalContact("1234567"), false);
   assert.equal(isValidHospitalContact("+82-2-1234-5678+"), false);
+});
+
+test("maps invitation lifecycle errors according to the backend contract", () => {
+  assert.equal(
+    INVITATION_ERROR_MESSAGES.INVITATION_002,
+    "만료된 가입 코드입니다. 새 코드를 발급받아 주세요.",
+  );
+  assert.equal(
+    INVITATION_ERROR_MESSAGES.INVITATION_003,
+    "이미 사용된 가입 코드입니다. 기존 계정으로 로그인하거나 관리자에게 문의해 주세요.",
+  );
+  assert.equal(
+    INVITATION_ERROR_MESSAGES.INVITATION_004,
+    "폐기된 가입 코드입니다. 새 코드를 발급받아 주세요.",
+  );
 });

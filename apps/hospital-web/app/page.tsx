@@ -14,9 +14,11 @@ import {
 import {
   CONTACT_SHARING_CONSENT_VERSION,
   HOSPITAL_CONTACT_PATTERN_SOURCE,
+  INVITATION_ERROR_MESSAGES,
   createHospitalSignupRequest,
   isValidHospitalContact,
 } from "./lib/hospital-signup-contract.js";
+import { shouldReloadProfileAfterReceivingStatusError } from "./lib/hospital-profile-contract.js";
 import { HospitalOffers } from "./components/HospitalOffers";
 
 type AuthView = "login" | "signup";
@@ -29,10 +31,7 @@ function friendlyErrorMessage(error: unknown) {
     AUTH_004: "아이디 또는 비밀번호가 올바르지 않습니다.",
     USER_002: "사용할 수 없는 계정입니다. 관리자에게 문의해 주세요.",
     USER_003: "이미 사용 중인 아이디입니다.",
-    INVITATION_001: "가입 코드를 찾을 수 없습니다. 코드를 다시 확인해 주세요.",
-    INVITATION_002: "이미 사용된 가입 코드입니다. 새 코드를 발급받아 주세요.",
-    INVITATION_003: "만료된 가입 코드입니다. 새 코드를 발급받아 주세요.",
-    INVITATION_004: "사용할 수 없는 가입 코드입니다. 관리자에게 문의해 주세요.",
+    ...INVITATION_ERROR_MESSAGES,
     GEOCODING_NOT_CONFIGURED:
       "주소 검색이 아직 설정되지 않았습니다. 관리자에게 문의해 주세요.",
     GEOCODING_UPSTREAM_ERROR:
@@ -708,7 +707,9 @@ function HospitalApp({
       }
     } catch (nextError) {
       if (operation === profileOperationRef.current) setError(nextError);
-      recoverServerState = !(nextError instanceof ApiError);
+      recoverServerState = shouldReloadProfileAfterReceivingStatusError(
+        nextError instanceof ApiError ? nextError.status : undefined,
+      );
       if (
         nextError instanceof ApiError &&
         ["AUTH_001", "AUTH_002", "AUTH_005", "USER_002"].includes(nextError.code)

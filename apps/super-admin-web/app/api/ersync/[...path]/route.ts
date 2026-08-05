@@ -41,13 +41,56 @@ async function handler(request: NextRequest, context: RouteContext) {
   }
 
   const cookieStore = await cookies();
-  const accessToken = cookieStore.get(ACCESS_COOKIE)?.value;
+  let accessToken = cookieStore.get(ACCESS_COOKIE)?.value;
   const refreshToken = cookieStore.get(REFRESH_COOKIE)?.value;
   const previousSession = decodeSession(cookieStore.get(SESSION_COOKIE)?.value);
   const body = method === "GET" ? undefined : await request.text();
   const query = request.nextUrl.search;
 
-  if (!accessToken || previousSession?.role !== "SUPER_ADMIN") {
+  if (previousSession?.role !== "SUPER_ADMIN") {
+    const response = NextResponse.json(
+      {
+        code: "AUTH_001",
+        message: "슈퍼 관리자 로그인이 필요합니다.",
+        fieldErrors: [],
+        traceId: null,
+      },
+      { status: 401 },
+    );
+    clearAuthCookies(response);
+    return response;
+  }
+
+  let rotatedAuth: AuthPayload | null = null;
+
+  if (!accessToken && refreshToken) {
+    const refreshed = await refreshAuth(refreshToken);
+    if (refreshed.status !== 200) {
+      const response = NextResponse.json(refreshed.data, {
+        status: refreshed.status,
+      });
+      clearAuthCookies(response);
+      return response;
+    }
+
+    const auth = refreshed.data as AuthPayload;
+    if (auth.role !== "SUPER_ADMIN") {
+      const response = NextResponse.json(
+        {
+          code: "AUTH_ROLE_MISMATCH",
+          message: "슈퍼 관리자 계정으로 다시 로그인해 주세요.",
+        },
+        { status: 403 },
+      );
+      clearAuthCookies(response);
+      return response;
+    }
+
+    rotatedAuth = auth;
+    accessToken = auth.accessToken;
+  }
+
+  if (!accessToken) {
     const response = NextResponse.json(
       {
         code: "AUTH_001",
@@ -69,7 +112,6 @@ async function handler(request: NextRequest, context: RouteContext) {
     });
 
   let result = await call(accessToken);
-  let rotatedAuth: AuthPayload | null = null;
 
   if (
     result.status === 401 &&
@@ -118,4 +160,3 @@ async function handler(request: NextRequest, context: RouteContext) {
 
 export const GET = handler;
 export const POST = handler;
-

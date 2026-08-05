@@ -140,6 +140,7 @@ function AdminApp({
   const [busy, setBusy] = useState(false);
   const [newCode, setNewCode] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
   const [orgForm, setOrgForm] = useState<{
     name: string;
     type: OrganizationType;
@@ -196,28 +197,39 @@ function AdminApp({
   }, [handleError, invitationPage, organizationFilter, statusFilter]);
 
   useEffect(() => {
-    void loadOrganizations();
+    const initialLoadTimer = window.setTimeout(() => {
+      void loadOrganizations();
+    }, 0);
+    return () => window.clearTimeout(initialLoadTimer);
   }, [loadOrganizations]);
-
-  useEffect(() => {
-    void loadInvitations();
-  }, [loadInvitations]);
 
   useEffect(() => {
     const refreshInvitations = () => {
       if (document.visibilityState === "visible") void loadInvitations();
     };
+    const initialLoadTimer = window.setTimeout(refreshInvitations, 0);
     const pollingTimer = window.setInterval(refreshInvitations, 10_000);
 
     window.addEventListener("focus", refreshInvitations);
     document.addEventListener("visibilitychange", refreshInvitations);
 
     return () => {
+      window.clearTimeout(initialLoadTimer);
       window.clearInterval(pollingTimer);
       window.removeEventListener("focus", refreshInvitations);
       document.removeEventListener("visibilitychange", refreshInvitations);
     };
   }, [loadInvitations]);
+
+  useEffect(() => {
+    const updateCurrentTime = () => setCurrentTime(Date.now());
+    const initialClockTimer = window.setTimeout(updateCurrentTime, 0);
+    const clockTimer = window.setInterval(updateCurrentTime, 10_000);
+    return () => {
+      window.clearTimeout(initialClockTimer);
+      window.clearInterval(clockTimer);
+    };
+  }, []);
 
   const selectedOrganization = useMemo(
     () =>
@@ -450,7 +462,11 @@ function AdminApp({
               <label>
                 <span>만료 시각</span>
                 <input
-                  min={toLocalDateTime(new Date(Date.now() + 60_000))}
+                  min={
+                    currentTime
+                      ? toLocalDateTime(new Date(currentTime + 60_000))
+                      : undefined
+                  }
                   required
                   type="datetime-local"
                   value={inviteForm.customExpiresAt}
@@ -516,7 +532,8 @@ function AdminApp({
           {invitations.map((invitation) => {
             const canRevoke =
               invitation.status === "AVAILABLE" &&
-              new Date(invitation.expiresAt).getTime() > Date.now();
+              currentTime > 0 &&
+              new Date(invitation.expiresAt).getTime() > currentTime;
             return (
               <div className="table-row" key={invitation.invitationCodeId}>
                 <span className={`status-badge status-${invitation.status.toLowerCase()}`}>
