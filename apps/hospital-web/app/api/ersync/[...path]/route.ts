@@ -30,6 +30,15 @@ function isAllowed(method: string, path: string) {
   ) {
     return true;
   }
+  if (
+    method === "GET" &&
+    new RegExp(
+      `^hospitals/me/offers/${offerIdPattern}/(clinical-timeline|location)$`,
+      "i",
+    ).test(path)
+  ) {
+    return true;
+  }
   return (
     method === "POST" &&
     new RegExp(

@@ -1130,6 +1130,22 @@ textarea:focus {
   font-weight: 850;
 }
 
+.detail-section-title > div,
+.detail-times {
+  display: grid;
+  gap: 4px;
+}
+
+.detail-section-title > div > span,
+.location-auto-refresh {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.detail-times {
+  justify-items: end;
+}
+
 .detail-section-title time,
 .treatment-row time,
 .rejection-result time {
@@ -1214,6 +1230,220 @@ textarea:focus {
 
 .treatment-row span {
   color: var(--muted);
+}
+
+.inline-loading,
+.timeline-empty,
+.location-empty {
+  padding: 20px;
+  border-radius: 10px;
+  background: #f7f9fc;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.clinical-snapshot-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.clinical-snapshot-summary > div {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f7f9fc;
+}
+
+.clinical-snapshot-summary small,
+.clinical-timeline-list article > small,
+.location-route-card small,
+.last-successful-route small {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.clinical-snapshot-summary strong,
+.location-route-card strong,
+.last-successful-route strong {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.clinical-timeline-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clinical-timeline-list li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  padding-bottom: 14px;
+}
+
+.clinical-timeline-list li:not(:last-child)::before {
+  position: absolute;
+  top: 14px;
+  bottom: -2px;
+  left: 5px;
+  width: 2px;
+  background: #dbe5f1;
+  content: "";
+}
+
+.timeline-marker {
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  margin-top: 13px;
+  border: 3px solid #d8e9f5;
+  border-radius: 50%;
+  background: var(--blue);
+}
+
+.clinical-timeline-list article {
+  display: grid;
+  gap: 9px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.clinical-timeline-list article > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.clinical-timeline-list article > header strong {
+  font-size: 12px;
+}
+
+.clinical-timeline-list article > header time {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.clinical-timeline-list article p {
+  margin: 0;
+  color: var(--slate);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.timeline-vitals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.timeline-vitals > span {
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: #f7f9fc;
+  color: var(--slate);
+  font-size: 10.5px;
+}
+
+.timeline-pagination {
+  padding: 12px 0 0;
+}
+
+.location-empty {
+  display: grid;
+  gap: 5px;
+}
+
+.location-freshness {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 11px;
+}
+
+.location-current {
+  background: #ecfdf3;
+  color: #067647;
+}
+
+.location-stale {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.location-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.location-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border-radius: 9px;
+  background: #f7f9fc;
+}
+
+.location-grid dt {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.location-grid dd {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.location-warning {
+  color: #9a3412 !important;
+}
+
+.location-route-card,
+.last-successful-route {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f7f9fc;
+}
+
+.location-route-card > div {
+  display: grid;
+  gap: 5px;
+}
+
+.location-route-card > time {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.last-successful-route {
+  border: 1px dashed #cbd5e1;
+  background: #fff;
+}
+
+.detail-last-successful-route {
+  margin-top: 12px;
 }
 
 .requester-card,
@@ -2021,7 +2251,9 @@ textarea:focus {
   }
 
   .clinical-grid,
-  .vital-grid {
+  .vital-grid,
+  .clinical-snapshot-summary,
+  .location-grid {
     grid-template-columns: 1fr 1fr;
   }
 

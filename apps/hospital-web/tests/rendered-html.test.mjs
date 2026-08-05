@@ -98,6 +98,28 @@ test("does not expose paramedic assessment or transport APIs", async () => {
   });
   assert.equal(transport.status, 404);
   assert.equal((await transport.json()).code, "COMMON_404");
+
+  const clinicalUpdate = await requestApp(
+    "/api/ersync/transport-requests/00112233-4455-6677-8899-aabbccddeeff/clinical-updates/vital-signs",
+    {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: "{}",
+    },
+  );
+  assert.equal(clinicalUpdate.status, 404);
+  assert.equal((await clinicalUpdate.json()).code, "COMMON_404");
+
+  const locationUpdate = await requestApp(
+    "/api/ersync/transport-requests/00112233-4455-6677-8899-aabbccddeeff/location",
+    {
+      method: "PUT",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: "{}",
+    },
+  );
+  assert.equal(locationUpdate.status, 404);
+  assert.equal((await locationUpdate.json()).code, "COMMON_404");
 });
 
 test("exposes hospital offer and realtime routes behind authentication", async () => {
@@ -136,11 +158,110 @@ test("exposes hospital offer and realtime routes behind authentication", async (
   assert.equal(withdrawal.status, 401);
   assert.equal((await withdrawal.json()).code, "AUTH_001");
 
+  for (const suffix of ["clinical-timeline?page=0&size=50", "location"]) {
+    const protectedRead = await requestApp(
+      `/api/ersync/hospitals/me/offers/00112233-4455-6677-8899-aabbccddeeff/${suffix}`,
+      { headers: { accept: "application/json" } },
+    );
+    assert.equal(protectedRead.status, 401);
+    assert.equal((await protectedRead.json()).code, "AUTH_001");
+  }
+
   const realtime = await requestApp("/api/realtime/events", {
     headers: { accept: "text/event-stream" },
   });
   assert.equal(realtime.status, 401);
   assert.equal((await realtime.json()).code, "AUTH_001");
+});
+
+test("forwards authenticated 06 clinical timeline and current-destination location reads", async () => {
+  const offerId = "00112233-4455-6677-8899-aabbccddeeff";
+  const requested = [];
+  const upstreamFetch = async (input, init = {}) => {
+    const url = new URL(typeof input === "string" ? input : input.url);
+    const headers = new Headers(init.headers);
+    assert.equal(headers.get("Authorization"), "Bearer hospital-access");
+    assert.equal(headers.get("Idempotency-Key"), null);
+    assert.equal(init.method, "GET");
+    requested.push(`${url.pathname}${url.search}`);
+
+    if (url.pathname.endsWith("/clinical-timeline")) {
+      return Response.json({
+        transportRequestId: "request-id",
+        latestSnapshot: {},
+        items: [],
+        page: 1,
+        size: 50,
+        totalElements: 0,
+        totalPages: 0,
+        serverNow: "2026-08-04T10:14:00Z",
+      });
+    }
+    return Response.json({
+      transportRequestId: "request-id",
+      latitude: null,
+      longitude: null,
+      freshness: "NOT_RECEIVED",
+      ageSeconds: null,
+      serverNow: "2026-08-04T10:15:09Z",
+    });
+  };
+
+  const timeline = await requestApp(
+    `/api/ersync/hospitals/me/offers/${offerId}/clinical-timeline?page=1&size=50`,
+    {
+      headers: {
+        accept: "application/json",
+        cookie: hospitalCookies(),
+      },
+    },
+    upstreamFetch,
+  );
+  assert.equal(timeline.status, 200);
+  assert.equal((await timeline.json()).page, 1);
+
+  const location = await requestApp(
+    `/api/ersync/hospitals/me/offers/${offerId}/location`,
+    {
+      headers: {
+        accept: "application/json",
+        cookie: hospitalCookies(),
+      },
+    },
+    upstreamFetch,
+  );
+  assert.equal(location.status, 200);
+  assert.equal((await location.json()).freshness, "NOT_RECEIVED");
+  assert.deepEqual(requested, [
+    `/api/v1/hospitals/me/offers/${offerId}/clinical-timeline?page=1&size=50`,
+    `/api/v1/hospitals/me/offers/${offerId}/location`,
+  ]);
+});
+
+test("passes through TRANSPORT_005 when 06 hospital read permission ends", async () => {
+  const offerId = "00112233-4455-6677-8899-aabbccddeeff";
+  const response = await requestApp(
+    `/api/ersync/hospitals/me/offers/${offerId}/location`,
+    {
+      headers: {
+        accept: "application/json",
+        cookie: hospitalCookies(),
+      },
+    },
+    async () =>
+      Response.json(
+        {
+          code: "TRANSPORT_005",
+          message: "조회할 수 없는 제안입니다.",
+          fieldErrors: [],
+          traceId: "trace-06",
+        },
+        { status: 404 },
+      ),
+  );
+
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).code, "TRANSPORT_005");
 });
 
 test("forwards authenticated ACTIVE/HISTORY offer reads without exposing tokens", async () => {

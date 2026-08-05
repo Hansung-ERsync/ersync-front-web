@@ -9,9 +9,12 @@ import {
 } from "react";
 import {
   ApiError,
+  ClinicalTimelineItem,
   errorMessage,
+  HospitalClinicalTimeline,
   HospitalOfferDetail,
   HospitalOfferListItem,
+  HospitalOfferLocation,
   hospitalApi,
   OfferStatus,
   OfferView,
@@ -22,12 +25,18 @@ import {
   WithdrawalReason,
 } from "../lib/api";
 import {
+  canReadClinicalTimeline,
+  canReadHospitalLocation,
   clearOfferCommand,
   createWithdrawalPayload,
   getOrCreateOfferCommand,
+  isClinicalRealtimeType,
+  isDestinationRealtimeType,
   isMinimalHospitalOffer,
   shouldRefreshBothOfferLists,
+  shouldRefreshSelectedLocation,
   shouldRefreshSelectedOffer,
+  shouldRefreshSelectedTimeline,
 } from "../lib/hospital-offer-contract.js";
 
 type StreamState = "CONNECTING" | "CONNECTED" | "RECONNECTING";
@@ -41,6 +50,7 @@ type RealtimeUpdate = {
 };
 
 type DecisionAction = "accept" | "reject" | "withdraw";
+type OfferSelection = { offer: HospitalOfferListItem; view: OfferView };
 
 const offerStatusLabel: Record<OfferStatus, string> = {
   PENDING: "응답 대기",
@@ -177,6 +187,26 @@ function formatEta(seconds: number | null | undefined) {
   return `약 ${minutes}분`;
 }
 
+function formatAge(seconds: number | null | undefined) {
+  if (seconds == null) return "-";
+  if (seconds < 60) return `${Math.max(0, Math.floor(seconds))}초 전`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}분 ${Math.floor(seconds % 60)}초 전`;
+}
+
+function formatCoordinate(value: number | null | undefined) {
+  return value == null ? "-" : value.toFixed(7);
+}
+
+function lastSuccessfulRouteSummary(
+  distanceMeters: number | null | undefined,
+  etaSeconds: number | null | undefined,
+  calculatedAt: string | null | undefined,
+) {
+  if (distanceMeters == null || etaSeconds == null || !calculatedAt) return null;
+  return `${formatDistance(distanceMeters)} · ${formatEta(etaSeconds)} · ${formatDate(calculatedAt)}`;
+}
+
 function patientSummary(
   offer: Pick<HospitalOfferListItem, "ageStatus" | "ageYears" | "sex">,
 ) {
@@ -235,6 +265,11 @@ function OfferCard({
   onSelect: () => void;
 }) {
   const restricted = isMinimalHospitalOffer(view, offer.offerStatus);
+  const lastSuccessfulRoute = lastSuccessfulRouteSummary(
+    offer.lastSuccessfulRouteDistanceMeters,
+    offer.lastSuccessfulEtaSeconds,
+    offer.lastSuccessfulEtaCalculatedAt,
+  );
 
   return (
     <button className="offer-card" onClick={onSelect} type="button">
@@ -267,6 +302,8 @@ function OfferCard({
             ? offer.canWithdraw
               ? "수락 철회 가능"
               : "임상·연락처·거리 비공개"
+            : offer.routeEstimateStatus === "UNAVAILABLE" && lastSuccessfulRoute
+              ? `마지막 성공 ${lastSuccessfulRoute}`
             : `직선 ${formatDistance(offer.straightLineDistanceMeters)}`}
         </span>
       </div>
@@ -283,6 +320,9 @@ function OfferCard({
               ? `철회 ${formatDate(offer.withdrawnAt)}`
               : "최소 이력"}
         </span>
+        {!restricted && offer.lastClinicalUpdateAt ? (
+          <span>임상 갱신 {formatDate(offer.lastClinicalUpdateAt)}</span>
+        ) : null}
       </div>
       <span className="offer-card-arrow" aria-hidden="true">→</span>
     </button>
@@ -337,6 +377,235 @@ function TreatmentDetails({ treatment }: { treatment: HospitalOfferDetail["treat
       </span>
       <time>{formatDate(treatment.performedAt)}</time>
     </div>
+  );
+}
+
+const timelineRecordLabel: Record<ClinicalTimelineItem["recordType"], string> = {
+  VITAL_SIGNS: "활력징후",
+  CONSCIOUSNESS: "의식 상태",
+  PRE_KTAS: "Pre-KTAS",
+  TREATMENT: "처치",
+};
+
+function TimelineRecordContent({ item }: { item: ClinicalTimelineItem }) {
+  if (item.recordType === "VITAL_SIGNS" && item.vitalSigns) {
+    return (
+      <div className="timeline-vitals">
+        {item.vitalSigns.measurements.map((measurement) => (
+          <span key={measurement.type}>
+            <strong>{vitalLabels[measurement.type]}</strong>{" "}
+            <VitalValue measurement={measurement} />
+          </span>
+        ))}
+      </div>
+    );
+  }
+  if (item.recordType === "CONSCIOUSNESS" && item.consciousness) {
+    return (
+      <p>
+        {item.consciousness.avpu === "UNASSESSABLE"
+          ? `평가 불가 · ${label(item.consciousness.unassessableReason)}`
+          : `AVPU ${item.consciousness.avpu}`}
+        {item.consciousness.unassessableDetail
+          ? ` · ${item.consciousness.unassessableDetail}`
+          : ""}
+      </p>
+    );
+  }
+  if (item.recordType === "PRE_KTAS" && item.preKtas) {
+    return (
+      <p>
+        {item.preKtas.classificationStatus === "COMPLETED"
+          ? `Pre-KTAS ${item.preKtas.level ?? "-"}단계`
+          : `긴급 미완료 · ${label(item.preKtas.exceptionReason)}`}
+        {item.preKtas.exceptionDetail ? ` · ${item.preKtas.exceptionDetail}` : ""}
+        {` · ${item.preKtas.standardVersion}`}
+      </p>
+    );
+  }
+  if (item.recordType === "TREATMENT" && item.treatment) {
+    return <TreatmentDetails treatment={item.treatment} />;
+  }
+  return <p>표시할 임상 원본이 없습니다.</p>;
+}
+
+function ClinicalTimelinePanel({
+  timeline,
+  loading,
+  error,
+  onPage,
+}: {
+  timeline: HospitalClinicalTimeline | null;
+  loading: boolean;
+  error: unknown;
+  onPage: (page: number) => void;
+}) {
+  const latest = timeline?.latestSnapshot;
+  const totalPages = Math.max(1, timeline?.totalPages ?? 1);
+
+  return (
+    <section className="detail-section clinical-timeline-section">
+      <div className="detail-section-title">
+        <div>
+          <h3>이송 중 임상 이력</h3>
+          <span>의료 발생 시각 순으로 보존된 원본 기록입니다.</span>
+        </div>
+        {latest ? <time>최근 수신 {formatDate(latest.lastClinicalUpdateAt)}</time> : null}
+      </div>
+      {loading ? <div className="inline-loading">임상 이력을 불러오고 있어요…</div> : null}
+      <OfferError error={error} />
+      {latest ? (
+        <div className="clinical-snapshot-summary">
+          <div>
+            <small>최신 Pre-KTAS</small>
+            <strong>
+              {latest.preKtas.classificationStatus === "COMPLETED"
+                ? `${latest.preKtas.level ?? "-"}단계`
+                : "긴급 미완료"}
+            </strong>
+          </div>
+          <div>
+            <small>최신 의식</small>
+            <strong>
+              {latest.consciousness.avpu === "UNASSESSABLE"
+                ? "평가 불가"
+                : `AVPU ${latest.consciousness.avpu}`}
+            </strong>
+          </div>
+          <div>
+            <small>최신 활력 측정</small>
+            <strong>{formatDate(latest.vitalSigns.measuredAt)}</strong>
+          </div>
+          <div>
+            <small>현재 처치 기록</small>
+            <strong>{latest.treatments.length}건</strong>
+          </div>
+        </div>
+      ) : null}
+      {timeline && !timeline.items.length ? (
+        <div className="timeline-empty">추가된 이송 중 임상 기록이 없습니다.</div>
+      ) : null}
+      {timeline?.items.length ? (
+        <ol className="clinical-timeline-list">
+          {timeline.items.map((item) => (
+            <li key={item.recordId}>
+              <div className="timeline-marker" aria-hidden="true" />
+              <article>
+                <header>
+                  <strong>{timelineRecordLabel[item.recordType]}</strong>
+                  <time>의료 발생 {formatDate(item.clinicalAt)}</time>
+                </header>
+                <TimelineRecordContent item={item} />
+                <small>
+                  입력 {formatDate(item.enteredAt)} · 서버 수신 {formatDate(item.serverReceivedAt)}
+                </small>
+              </article>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {timeline && timeline.totalPages > 1 ? (
+        <div className="offer-pagination timeline-pagination">
+          <button
+            disabled={loading || timeline.page <= 0}
+            onClick={() => onPage(timeline.page - 1)}
+            type="button"
+          >
+            이전
+          </button>
+          <span>{timeline.page + 1} / {totalPages}</span>
+          <button
+            disabled={loading || timeline.page + 1 >= totalPages}
+            onClick={() => onPage(timeline.page + 1)}
+            type="button"
+          >
+            다음
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function AmbulanceLocationPanel({
+  location,
+  loading,
+  error,
+}: {
+  location: HospitalOfferLocation | null;
+  loading: boolean;
+  error: unknown;
+}) {
+  const lastSuccessful = location
+    ? lastSuccessfulRouteSummary(
+        location.lastSuccessfulRouteDistanceMeters,
+        location.lastSuccessfulEtaSeconds,
+        location.lastSuccessfulEtaCalculatedAt,
+      )
+    : null;
+
+  return (
+    <section className="detail-section ambulance-location-section">
+      <div className="detail-section-title">
+        <div>
+          <h3>현재 구급차 위치</h3>
+          <span>현재 목적지 병원에만 공개되는 정확한 위치입니다.</span>
+        </div>
+        <span className="location-auto-refresh">10초마다 서버 상태 확인</span>
+      </div>
+      {loading && !location ? (
+        <div className="inline-loading">최신 위치를 확인하고 있어요…</div>
+      ) : null}
+      <OfferError error={error} />
+      {location?.freshness === "NOT_RECEIVED" ? (
+        <div className="location-empty">
+          <strong>아직 수신된 위치가 없습니다.</strong>
+          <span>위치 갱신 신호가 오거나 다음 서버 확인 때 다시 조회합니다.</span>
+        </div>
+      ) : null}
+      {location && location.freshness !== "NOT_RECEIVED" ? (
+        <>
+          <div className={`location-freshness location-${location.freshness.toLowerCase()}`}>
+            <strong>{location.freshness === "CURRENT" ? "최신 위치" : "오래된 위치"}</strong>
+            <span>서버 수신 {formatAge(location.ageSeconds)}</span>
+          </div>
+          <dl className="location-grid">
+            <div><dt>위도</dt><dd>{formatCoordinate(location.latitude)}</dd></div>
+            <div><dt>경도</dt><dd>{formatCoordinate(location.longitude)}</dd></div>
+            <div><dt>GPS 측정</dt><dd>{formatDate(location.capturedAt)}</dd></div>
+            <div><dt>서버 수신</dt><dd>{formatDate(location.lastReceivedAt)}</dd></div>
+          </dl>
+          {location.freshness === "STALE" ? (
+            <p className="location-warning">
+              30초 이상 새 위치가 수신되지 않았습니다. 마지막 좌표는 유지하되 현재 위치로 단정하지 않습니다.
+            </p>
+          ) : null}
+        </>
+      ) : null}
+      {location && location.routeEstimateStatus ? (
+        <div className="location-route-card">
+          <div>
+            <small>현재 ETA 상태</small>
+            <strong>
+              {location.routeEstimateStatus === "CALCULATING"
+                ? "계산 중"
+                : location.routeEstimateStatus === "UNAVAILABLE"
+                  ? "계산할 수 없음"
+                  : `${formatDistance(location.routeDistanceMeters)} · ${formatEta(location.etaSeconds)}`}
+            </strong>
+          </div>
+          {location.routeEstimateStatus === "AVAILABLE" ? (
+            <time>계산 {formatDate(location.etaCalculatedAt)}</time>
+          ) : null}
+          {location.routeEstimateStatus !== "AVAILABLE" && lastSuccessful ? (
+            <div className="last-successful-route">
+              <small>마지막 성공 계산</small>
+              <strong>{lastSuccessful}</strong>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -561,6 +830,12 @@ function OfferDetailModal({
   detail,
   loading,
   error,
+  timeline,
+  timelineLoading,
+  timelineError,
+  location,
+  locationLoading,
+  locationError,
   decisionBusy,
   decisionError,
   decisionNotice,
@@ -582,10 +857,17 @@ function OfferDetailModal({
   onWithdrawalReason,
   onWithdrawalDetail,
   onWithdraw,
+  onTimelinePage,
 }: {
   detail: HospitalOfferDetail | null;
   loading: boolean;
   error: unknown;
+  timeline: HospitalClinicalTimeline | null;
+  timelineLoading: boolean;
+  timelineError: unknown;
+  location: HospitalOfferLocation | null;
+  locationLoading: boolean;
+  locationError: unknown;
   decisionBusy: DecisionAction | null;
   decisionError: unknown;
   decisionNotice: string | null;
@@ -607,6 +889,7 @@ function OfferDetailModal({
   onWithdrawalReason: (reason: WithdrawalReason | "") => void;
   onWithdrawalDetail: (detail: string) => void;
   onWithdraw: (event: FormEvent) => void;
+  onTimelinePage: (page: number) => void;
 }) {
   return (
     <div className="offer-modal-backdrop" onMouseDown={onClose}>
@@ -664,7 +947,10 @@ function OfferDetailModal({
             <section className="detail-section">
               <div className="detail-section-title">
                 <h3>환자·발생 정보</h3>
-                <time>접수 {formatDate(detail.timing.requestReceivedAt)}</time>
+                <div className="detail-times">
+                  <time>접수 {formatDate(detail.timing.requestReceivedAt)}</time>
+                  <time>임상 갱신 {formatDate(detail.timing.lastClinicalUpdateAt)}</time>
+                </div>
               </div>
               <dl className="clinical-grid">
                 <div><dt>환자</dt><dd>{patientSummary(detail.patient)}</dd></div>
@@ -692,6 +978,15 @@ function OfferDetailModal({
                 ))}
               </div>
             </section>
+
+            {detail.offerStatus === "PENDING" || detail.offerStatus === "ACCEPTED" ? (
+              <ClinicalTimelinePanel
+                error={timelineError}
+                loading={timelineLoading}
+                onPage={onTimelinePage}
+                timeline={timeline}
+              />
+            ) : null}
 
             <section className="detail-section">
               <div className="detail-section-title"><h3>현장 처치</h3></div>
@@ -734,7 +1029,30 @@ function OfferDetailModal({
               {detail.route.status === "UNAVAILABLE" ? (
                 <p>경로 계산 실패와 관계없이 수락·거절할 수 있습니다.</p>
               ) : null}
+              {detail.route.status !== "AVAILABLE" &&
+              detail.route.lastSuccessfulRouteDistanceMeters != null &&
+              detail.route.lastSuccessfulEtaSeconds != null &&
+              detail.route.lastSuccessfulCalculatedAt ? (
+                <div className="last-successful-route detail-last-successful-route">
+                  <small>마지막 성공 계산</small>
+                  <strong>
+                    {lastSuccessfulRouteSummary(
+                      detail.route.lastSuccessfulRouteDistanceMeters,
+                      detail.route.lastSuccessfulEtaSeconds,
+                      detail.route.lastSuccessfulCalculatedAt,
+                    )}
+                  </strong>
+                </div>
+              ) : null}
             </section>
+
+            {detail.offerStatus === "ACCEPTED" && detail.currentDestination ? (
+              <AmbulanceLocationPanel
+                error={locationError}
+                loading={locationLoading}
+                location={location}
+              />
+            ) : null}
 
             {detail.rejectionReason ? (
               <section className="detail-section rejection-result">
@@ -848,6 +1166,14 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
   const [detail, setDetail] = useState<HospitalOfferDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<unknown>(null);
+  const [timelinePage, setTimelinePage] = useState(0);
+  const [timeline, setTimeline] = useState<HospitalClinicalTimeline | null>(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<unknown>(null);
+  const [location, setLocation] = useState<HospitalOfferLocation | null>(null);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationError, setLocationError] = useState<unknown>(null);
+  const [selectedOfferView, setSelectedOfferView] = useState<OfferView | null>(null);
   const [decisionBusy, setDecisionBusy] = useState<DecisionAction | null>(null);
   const [decisionError, setDecisionError] = useState<unknown>(null);
   const [decisionNotice, setDecisionNotice] = useState<string | null>(null);
@@ -860,11 +1186,19 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
   >("");
   const [withdrawalDetail, setWithdrawalDetail] = useState("");
   const [streamState, setStreamState] = useState<StreamState>("CONNECTING");
+  const protectedDataGenerationRef = useRef(0);
+  const locationRequestInFlightRef = useRef(false);
+  const realtimeQueueRef = useRef<Promise<void>>(Promise.resolve());
   const currentRef = useRef({
     view,
     page,
+    timelinePage,
     selectedOfferId,
     selectedOfferKey: selectedOffer?.offerId ?? null,
+    selectedOfferView,
+    selectedTransportRequestId: selectedOffer?.transportRequestId ?? null,
+    selectedOfferStatus: selectedOffer?.offerStatus ?? null,
+    selectedCurrentDestination: selectedOffer?.currentDestination ?? false,
   });
   const expiredRef = useRef(onSessionExpired);
 
@@ -872,11 +1206,41 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
     currentRef.current = {
       view,
       page,
+      timelinePage,
       selectedOfferId,
       selectedOfferKey: selectedOffer?.offerId ?? null,
+      selectedOfferView,
+      selectedTransportRequestId: selectedOffer?.transportRequestId ?? null,
+      selectedOfferStatus: selectedOffer?.offerStatus ?? null,
+      selectedCurrentDestination: selectedOffer?.currentDestination ?? false,
     };
     expiredRef.current = onSessionExpired;
-  }, [onSessionExpired, page, selectedOffer?.offerId, selectedOfferId, view]);
+  }, [
+    onSessionExpired,
+    page,
+    selectedOffer?.currentDestination,
+    selectedOffer?.offerId,
+    selectedOffer?.offerStatus,
+    selectedOffer?.transportRequestId,
+    selectedOfferId,
+    selectedOfferView,
+    timelinePage,
+    view,
+  ]);
+
+  const clearProtectedData = useCallback(() => {
+    protectedDataGenerationRef.current += 1;
+    locationRequestInFlightRef.current = false;
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(false);
+    setTimeline(null);
+    setTimelineError(null);
+    setTimelineLoading(false);
+    setLocation(null);
+    setLocationError(null);
+    setLocationLoading(false);
+  }, []);
 
   const loadOffers = useCallback(async (targetView: OfferView, targetPage: number) => {
     setLoading(true);
@@ -893,7 +1257,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
     }
   }, []);
 
-  const refreshBoth = useCallback(async () => {
+  const refreshBoth = useCallback(async (): Promise<OfferSelection | null> => {
     setLoading(true);
     setError(null);
     try {
@@ -905,39 +1269,166 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
       setResult(currentRef.current.view === "ACTIVE" ? active : history);
       const selectedOfferKey = currentRef.current.selectedOfferKey;
       if (selectedOfferKey) {
-        const refreshedSelection = [...active.items, ...history.items].find(
+        const activeOffer = active.items.find(
           (offer) => offer.offerId === selectedOfferKey,
         );
-        if (refreshedSelection) setSelectedOffer(refreshedSelection);
+        const historyOffer = history.items.find(
+          (offer) => offer.offerId === selectedOfferKey,
+        );
+        const refreshedSelection = activeOffer
+          ? { offer: activeOffer, view: "ACTIVE" as const }
+          : historyOffer
+            ? { offer: historyOffer, view: "HISTORY" as const }
+            : null;
+        setSelectedOffer(refreshedSelection?.offer ?? null);
+        setSelectedOfferView(refreshedSelection?.view ?? null);
+        setPage(0);
+        return refreshedSelection;
       }
       setPage(0);
+      return null;
     } catch (nextError) {
       setError(nextError);
       if (isSessionError(nextError)) expiredRef.current();
+      return null;
     } finally {
       setLoading(false);
     }
   }, []);
 
   const loadDetail = useCallback(async (offerId: string) => {
+    const generation = protectedDataGenerationRef.current;
     setDetailLoading(true);
     setDetailError(null);
     try {
       const next = await hospitalApi.offerDetail(offerId);
-      setDetail(next);
+      if (generation === protectedDataGenerationRef.current) setDetail(next);
     } catch (nextError) {
-      setDetailError(nextError);
+      if (generation === protectedDataGenerationRef.current) {
+        setDetailError(nextError);
+      }
       if (isSessionError(nextError)) expiredRef.current();
       if (nextError instanceof ApiError && nextError.code === "TRANSPORT_005") {
         setSelectedOffer(null);
+        setSelectedOfferView(null);
         setSelectedOfferId(null);
-        setDetail(null);
+        clearProtectedData();
         await refreshBoth();
       }
     } finally {
-      setDetailLoading(false);
+      if (generation === protectedDataGenerationRef.current) {
+        setDetailLoading(false);
+      }
     }
-  }, [refreshBoth]);
+  }, [clearProtectedData, refreshBoth]);
+
+  const loadTimeline = useCallback(async (offerId: string, targetPage: number) => {
+    const generation = protectedDataGenerationRef.current;
+    setTimelineLoading(true);
+    setTimelineError(null);
+    try {
+      const next = await hospitalApi.clinicalTimeline(offerId, targetPage, 50);
+      if (generation === protectedDataGenerationRef.current) {
+        setTimeline(next);
+        setTimelinePage(next.page);
+      }
+    } catch (nextError) {
+      if (generation === protectedDataGenerationRef.current) {
+        setTimelineError(nextError);
+        setTimeline(null);
+      }
+      if (isSessionError(nextError)) expiredRef.current();
+      if (nextError instanceof ApiError && nextError.code === "TRANSPORT_005") {
+        setSelectedOffer(null);
+        setSelectedOfferView(null);
+        setSelectedOfferId(null);
+        clearProtectedData();
+        await refreshBoth();
+      }
+    } finally {
+      if (generation === protectedDataGenerationRef.current) {
+        setTimelineLoading(false);
+      }
+    }
+  }, [clearProtectedData, refreshBoth]);
+
+  const loadLocation = useCallback(async (offerId: string) => {
+    if (locationRequestInFlightRef.current) return;
+    const generation = protectedDataGenerationRef.current;
+    locationRequestInFlightRef.current = true;
+    setLocationLoading(true);
+    setLocationError(null);
+    try {
+      const next = await hospitalApi.offerLocation(offerId);
+      if (generation === protectedDataGenerationRef.current) setLocation(next);
+    } catch (nextError) {
+      if (generation === protectedDataGenerationRef.current) {
+        setLocationError(nextError);
+        setLocation(null);
+      }
+      if (isSessionError(nextError)) expiredRef.current();
+      if (nextError instanceof ApiError && nextError.code === "TRANSPORT_005") {
+        setSelectedOffer(null);
+        setSelectedOfferView(null);
+        setSelectedOfferId(null);
+        clearProtectedData();
+        await refreshBoth();
+      }
+    } finally {
+      if (generation === protectedDataGenerationRef.current) {
+        locationRequestInFlightRef.current = false;
+        setLocationLoading(false);
+      }
+    }
+  }, [clearProtectedData, refreshBoth]);
+
+  const loadSelectedResources = useCallback(async (
+    selection: OfferSelection,
+    targetTimelinePage = 0,
+  ) => {
+    const { offer, view: offerView } = selection;
+    setSelectedOffer(offer);
+    setSelectedOfferView(offerView);
+    if (isMinimalHospitalOffer(offerView, offer.offerStatus)) {
+      setSelectedOfferId(null);
+      clearProtectedData();
+      return;
+    }
+
+    setSelectedOfferId(offer.offerId);
+    const tasks: Promise<void>[] = [loadDetail(offer.offerId)];
+    if (canReadClinicalTimeline(offerView, offer.offerStatus)) {
+      tasks.push(loadTimeline(offer.offerId, targetTimelinePage));
+    } else {
+      setTimeline(null);
+      setTimelineError(null);
+    }
+    if (canReadHospitalLocation(offer.offerStatus, offer.currentDestination)) {
+      tasks.push(loadLocation(offer.offerId));
+    } else {
+      setLocation(null);
+      setLocationError(null);
+    }
+    await Promise.all(tasks);
+  }, [clearProtectedData, loadDetail, loadLocation, loadTimeline]);
+
+  const refreshVisibleSelection = useCallback(async () => {
+    const hadSelection = Boolean(currentRef.current.selectedOfferKey);
+    if (hadSelection) clearProtectedData();
+    const refreshedSelection = await refreshBoth();
+    if (!hadSelection) return;
+    if (!refreshedSelection) {
+      setSelectedOffer(null);
+      setSelectedOfferView(null);
+      setSelectedOfferId(null);
+      clearProtectedData();
+      return;
+    }
+    await loadSelectedResources(
+      refreshedSelection,
+      currentRef.current.timelinePage,
+    );
+  }, [clearProtectedData, loadSelectedResources, refreshBoth]);
 
   useEffect(() => {
     const loadTimer = window.setTimeout(() => void loadOffers(view, page), 0);
@@ -947,9 +1438,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
   useEffect(() => {
     const onFocus = () => {
       if (document.visibilityState !== "visible") return;
-      void refreshBoth();
-      const currentOfferId = currentRef.current.selectedOfferId;
-      if (currentOfferId) void loadDetail(currentOfferId);
+      void refreshVisibleSelection();
     };
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
@@ -957,7 +1446,104 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
     };
-  }, [loadDetail, refreshBoth]);
+  }, [refreshVisibleSelection]);
+
+  const handleRealtimeUpdate = useCallback(async (update: RealtimeUpdate) => {
+    if (isDestinationRealtimeType(update.type)) {
+      await refreshVisibleSelection();
+      return;
+    }
+
+    const beforeRefresh = currentRef.current;
+    let refreshedSelection: OfferSelection | null = null;
+    if (shouldRefreshBothOfferLists(update.type)) {
+      refreshedSelection = await refreshBoth();
+      if (beforeRefresh.selectedOfferKey && !refreshedSelection) {
+        setSelectedOfferId(null);
+        clearProtectedData();
+        return;
+      }
+    }
+
+    const selectedOfferId =
+      refreshedSelection?.offer.offerId ?? beforeRefresh.selectedOfferKey;
+    const selectedRequestId =
+      refreshedSelection?.offer.transportRequestId ??
+      beforeRefresh.selectedTransportRequestId;
+
+    if (
+      isClinicalRealtimeType(update.type) &&
+      refreshedSelection &&
+      shouldRefreshSelectedOffer(
+        update.type,
+        update.aggregateId,
+        selectedOfferId,
+        selectedRequestId,
+      )
+    ) {
+      await loadSelectedResources(
+        refreshedSelection,
+        currentRef.current.timelinePage,
+      );
+      return;
+    }
+
+    if (
+      update.type === "ETA_UPDATED" &&
+      refreshedSelection &&
+      shouldRefreshSelectedOffer(
+        update.type,
+        update.aggregateId,
+        selectedOfferId,
+        selectedRequestId,
+      )
+    ) {
+      setSelectedOffer(refreshedSelection.offer);
+      setSelectedOfferView(refreshedSelection.view);
+      await loadDetail(refreshedSelection.offer.offerId);
+      if (
+        canReadHospitalLocation(
+          refreshedSelection.offer.offerStatus,
+          refreshedSelection.offer.currentDestination,
+        )
+      ) {
+        await loadLocation(refreshedSelection.offer.offerId);
+      }
+      return;
+    }
+
+    if (
+      selectedOfferId &&
+      beforeRefresh.selectedCurrentDestination &&
+      shouldRefreshSelectedLocation(
+        update.type,
+        update.aggregateId,
+        selectedOfferId,
+        selectedRequestId,
+      )
+    ) {
+      await loadLocation(selectedOfferId);
+    }
+
+    if (
+      selectedOfferId &&
+      shouldRefreshSelectedTimeline(
+        update.type,
+        update.aggregateId,
+        selectedRequestId,
+      )
+    ) {
+      await loadTimeline(selectedOfferId, currentRef.current.timelinePage);
+    }
+  }, [
+    clearProtectedData,
+    loadDetail,
+    loadLocation,
+    loadSelectedResources,
+    loadTimeline,
+    refreshBoth,
+    refreshVisibleSelection,
+  ]);
 
   useEffect(() => {
     let source: EventSource | null = null;
@@ -970,9 +1556,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
       source = new EventSource("/api/realtime/events");
       source.onopen = () => {
         setStreamState("CONNECTED");
-        void refreshBoth();
-        const currentOfferId = currentRef.current.selectedOfferId;
-        if (currentOfferId) void loadDetail(currentOfferId);
+        void refreshVisibleSelection();
       };
       source.addEventListener("update", (event) => {
         let update: RealtimeUpdate | null = null;
@@ -981,20 +1565,9 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
         } catch {
           return;
         }
-        if (shouldRefreshBothOfferLists(update.type)) {
-          void refreshBoth();
-        }
-        const selectedOfferId = currentRef.current.selectedOfferId;
-        if (
-          shouldRefreshSelectedOffer(
-            update.type,
-            update.aggregateId,
-            selectedOfferId,
-          ) &&
-          selectedOfferId
-        ) {
-          void loadDetail(selectedOfferId);
-        }
+        realtimeQueueRef.current = realtimeQueueRef.current
+          .then(() => handleRealtimeUpdate(update))
+          .catch(() => undefined);
       });
       source.onerror = () => {
         if (stopped) return;
@@ -1010,7 +1583,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
           } catch {
             // 일시적인 네트워크 오류는 SSE 재연결로 복구합니다.
           }
-          void refreshBoth();
+          await refreshVisibleSelection();
           connect();
         }, 2_000);
       };
@@ -1022,13 +1595,31 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
       source?.close();
       if (retryTimer != null) window.clearTimeout(retryTimer);
     };
-  }, [loadDetail, refreshBoth]);
+  }, [handleRealtimeUpdate, refreshVisibleSelection]);
+
+  useEffect(() => {
+    if (
+      !selectedOffer ||
+      !canReadHospitalLocation(
+        selectedOffer.offerStatus,
+        selectedOffer.currentDestination,
+      )
+    ) {
+      return;
+    }
+    const offerId = selectedOffer.offerId;
+    const pollTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadLocation(offerId);
+    }, 10_000);
+    return () => window.clearInterval(pollTimer);
+  }, [
+    loadLocation,
+    selectedOffer,
+  ]);
 
   const selectOffer = (offer: HospitalOfferListItem) => {
-    const restricted = isMinimalHospitalOffer(view, offer.offerStatus);
-    setSelectedOffer(offer);
-    setSelectedOfferId(restricted ? null : offer.offerId);
-    setDetail(null);
+    clearProtectedData();
+    setTimelinePage(0);
     setDecisionError(null);
     setDecisionNotice(null);
     setShowReject(false);
@@ -1037,14 +1628,15 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
     setRejectDetail("");
     setWithdrawalReason("");
     setWithdrawalDetail("");
-    if (!restricted) void loadDetail(offer.offerId);
+    void loadSelectedResources({ offer, view }, 0);
   };
 
   const closeDetail = () => {
     setSelectedOffer(null);
+    setSelectedOfferView(null);
     setSelectedOfferId(null);
-    setDetail(null);
-    setDetailError(null);
+    setTimelinePage(0);
+    clearProtectedData();
     setDecisionError(null);
     setDecisionNotice(null);
     setShowReject(false);
@@ -1055,8 +1647,8 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
     setWithdrawalDetail("");
   };
 
-  const refreshAfterDecision = async (offerId: string) => {
-    await Promise.all([refreshBoth(), loadDetail(offerId)]);
+  const refreshAfterDecision = async () => {
+    await refreshVisibleSelection();
   };
 
   const accept = async () => {
@@ -1078,7 +1670,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
           ? "이전에 처리된 수락 결과를 복구했습니다."
           : "수용 가능으로 응답했습니다. 최종 목적지는 아직 확정되지 않았습니다.",
       );
-      await refreshAfterDecision(detail.offerId);
+      await refreshAfterDecision();
     } catch (nextError) {
       setDecisionError(nextError);
       if (isSessionError(nextError)) expiredRef.current();
@@ -1087,7 +1679,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
         ["TRANSPORT_005", "TRANSPORT_006", "COMMON_005"].includes(nextError.code)
       ) {
         clearOfferCommand(window.sessionStorage, detail.offerId, command.idempotencyKey);
-        await refreshAfterDecision(detail.offerId);
+        await refreshAfterDecision();
       }
       if (nextError instanceof ApiError && nextError.code === "COMMON_001") {
         clearOfferCommand(window.sessionStorage, detail.offerId, command.idempotencyKey);
@@ -1127,7 +1719,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
           : "거절 응답을 전송했습니다.",
       );
       setShowReject(false);
-      await refreshAfterDecision(detail.offerId);
+      await refreshAfterDecision();
     } catch (nextError) {
       setDecisionError(nextError);
       if (isSessionError(nextError)) expiredRef.current();
@@ -1136,7 +1728,7 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
         ["TRANSPORT_005", "TRANSPORT_006", "COMMON_005"].includes(nextError.code)
       ) {
         clearOfferCommand(window.sessionStorage, detail.offerId, command.idempotencyKey);
-        await refreshAfterDecision(detail.offerId);
+        await refreshAfterDecision();
       }
       if (nextError instanceof ApiError && nextError.code === "COMMON_001") {
         clearOfferCommand(window.sessionStorage, detail.offerId, command.idempotencyKey);
@@ -1206,6 +1798,10 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
               routeEstimateStatus: null,
               routeDistanceMeters: null,
               etaSeconds: null,
+              lastSuccessfulRouteDistanceMeters: null,
+              lastSuccessfulEtaSeconds: null,
+              lastSuccessfulEtaCalculatedAt: null,
+              lastClinicalUpdateAt: null,
               offeredAt: null,
               withdrawalReason: response.reason,
               withdrawalDetail: response.detail,
@@ -1213,8 +1809,9 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
             }
           : current,
       );
+      setSelectedOfferView("HISTORY");
       setSelectedOfferId(null);
-      setDetail(null);
+      clearProtectedData();
       await refreshBoth();
     } catch (nextError) {
       setDecisionError(nextError);
@@ -1230,8 +1827,9 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
       ) {
         clearOfferCommand(window.sessionStorage, offerId, command.idempotencyKey);
         setSelectedOffer(null);
+        setSelectedOfferView(null);
         setSelectedOfferId(null);
-        setDetail(null);
+        clearProtectedData();
         await refreshBoth();
         setError(nextError);
       }
@@ -1339,6 +1937,9 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
           detail={detail}
           error={detailError}
           loading={detailLoading}
+          location={location}
+          locationError={locationError}
+          locationLoading={locationLoading}
           onAccept={() => void accept()}
           onCancelReject={() => { setShowReject(false); setDecisionError(null); }}
           onCancelWithdrawal={() => { setShowWithdrawal(false); setDecisionError(null); }}
@@ -1348,6 +1949,10 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
           onRejectReason={setRejectReason}
           onShowReject={() => { setShowReject(true); setDecisionError(null); }}
           onShowWithdrawal={() => { setShowWithdrawal(true); setDecisionError(null); }}
+          onTimelinePage={(targetPage) => {
+            setTimelinePage(targetPage);
+            void loadTimeline(selectedOfferId, targetPage);
+          }}
           onWithdrawalDetail={setWithdrawalDetail}
           onWithdrawalReason={setWithdrawalReason}
           onWithdraw={(event) => void withdrawAcceptance(event)}
@@ -1355,6 +1960,9 @@ export function HospitalOffers({ onSessionExpired }: { onSessionExpired: () => v
           rejectReason={rejectReason}
           showReject={showReject}
           showWithdrawal={showWithdrawal}
+          timeline={timeline}
+          timelineError={timelineError}
+          timelineLoading={timelineLoading}
           withdrawalDetail={withdrawalDetail}
           withdrawalReason={withdrawalReason}
         />

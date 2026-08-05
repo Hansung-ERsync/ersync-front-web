@@ -17,6 +17,7 @@ export type OfferStatus =
   | "NO_RESPONSE"
   | "ACCEPTANCE_WITHDRAWN";
 export type RouteEstimateStatus = "CALCULATING" | "AVAILABLE" | "UNAVAILABLE";
+export type LocationFreshness = "NOT_RECEIVED" | "CURRENT" | "STALE";
 export type RejectionReason =
   | "ER_GENERAL_BED_SHORTAGE"
   | "ISOLATION_BED_SHORTAGE"
@@ -62,6 +63,10 @@ export type HospitalOfferListItem = {
   routeEstimateStatus: RouteEstimateStatus | null;
   routeDistanceMeters: number | null;
   etaSeconds: number | null;
+  lastSuccessfulRouteDistanceMeters: number | null;
+  lastSuccessfulEtaSeconds: number | null;
+  lastSuccessfulEtaCalculatedAt: string | null;
+  lastClinicalUpdateAt: string | null;
   offeredAt: string | null;
   respondedAt: string | null;
   withdrawalReason: WithdrawalReason | null;
@@ -81,6 +86,42 @@ export type VitalSignMeasurement = {
   secondaryValue: number | null;
   unavailableReason: string | null;
   unavailableDetail: string | null;
+};
+
+export type PreKtasSnapshot = {
+  classificationStatus: "COMPLETED" | "EMERGENCY_UNFINISHED";
+  level: number | null;
+  exceptionReason: string | null;
+  exceptionDetail: string | null;
+  assessedAt: string | null;
+  standardVersion: string;
+};
+
+export type ConsciousnessSnapshot = {
+  avpu: "A" | "V" | "P" | "U" | "UNASSESSABLE";
+  unassessableReason: string | null;
+  unassessableDetail: string | null;
+  observedAt: string;
+};
+
+export type VitalSignsSnapshot = {
+  measuredAt: string;
+  measurements: VitalSignMeasurement[];
+};
+
+export type TreatmentRecord = {
+  type: string;
+  attemptResult: string | null;
+  performedAt: string | null;
+  method: string | null;
+  device: string | null;
+  flowRateLpm: number | null;
+  currentStatus: string | null;
+  medicationName: string | null;
+  dose: string | null;
+  route: string | null;
+  site: string | null;
+  detail: string | null;
 };
 
 export type HospitalOfferDetail = {
@@ -106,38 +147,10 @@ export type HospitalOfferDetail = {
     onsetTimeStatus: "EXACT" | "ESTIMATED" | "UNKNOWN";
     onsetAt: string | null;
   };
-  preKtas: {
-    classificationStatus: "COMPLETED" | "EMERGENCY_UNFINISHED";
-    level: number | null;
-    exceptionReason: string | null;
-    exceptionDetail: string | null;
-    assessedAt: string | null;
-    standardVersion: string;
-  };
-  consciousness: {
-    avpu: "A" | "V" | "P" | "U" | "UNASSESSABLE";
-    unassessableReason: string | null;
-    unassessableDetail: string | null;
-    observedAt: string;
-  };
-  vitalSigns: {
-    measuredAt: string;
-    measurements: VitalSignMeasurement[];
-  };
-  treatments: Array<{
-    type: string;
-    attemptResult: string | null;
-    performedAt: string | null;
-    method: string | null;
-    device: string | null;
-    flowRateLpm: number | null;
-    currentStatus: string | null;
-    medicationName: string | null;
-    dose: string | null;
-    route: string | null;
-    site: string | null;
-    detail: string | null;
-  }>;
+  preKtas: PreKtasSnapshot;
+  consciousness: ConsciousnessSnapshot;
+  vitalSigns: VitalSignsSnapshot;
+  treatments: TreatmentRecord[];
   requester: {
     organizationName: string;
     callbackContact: string;
@@ -148,6 +161,9 @@ export type HospitalOfferDetail = {
     routeDistanceMeters: number | null;
     etaSeconds: number | null;
     calculatedAt: string | null;
+    lastSuccessfulRouteDistanceMeters: number | null;
+    lastSuccessfulEtaSeconds: number | null;
+    lastSuccessfulCalculatedAt: string | null;
   };
   timing: {
     requestReceivedAt: string;
@@ -161,6 +177,61 @@ export type HospitalOfferDetail = {
   withdrawnAt: string | null;
   respondedAt: string | null;
   serverNow: string;
+};
+
+export type ClinicalTimelineRecordType =
+  | "VITAL_SIGNS"
+  | "CONSCIOUSNESS"
+  | "PRE_KTAS"
+  | "TREATMENT";
+
+export type ClinicalTimelineItem = {
+  recordType: ClinicalTimelineRecordType;
+  recordId: string;
+  clinicalAt: string;
+  enteredAt: string;
+  serverReceivedAt: string;
+  preKtas: PreKtasSnapshot | null;
+  consciousness: ConsciousnessSnapshot | null;
+  vitalSigns: VitalSignsSnapshot | null;
+  treatment: TreatmentRecord | null;
+};
+
+export type HospitalClinicalTimeline = {
+  transportRequestId: string;
+  latestSnapshot: {
+    preKtas: PreKtasSnapshot;
+    consciousness: ConsciousnessSnapshot;
+    vitalSigns: VitalSignsSnapshot;
+    treatments: TreatmentRecord[];
+    lastClinicalUpdateAt: string;
+  };
+  items: ClinicalTimelineItem[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  serverNow: string;
+};
+
+export type HospitalOfferLocation = {
+  transportRequestId: string;
+  latitude: number | null;
+  longitude: number | null;
+  capturedAt: string | null;
+  lastReceivedAt: string | null;
+  freshness: LocationFreshness;
+  ageSeconds: number | null;
+  serverNow: string;
+  locationReplaced: boolean | null;
+  routeEstimateStatus: RouteEstimateStatus | null;
+  routeDistanceMeters: number | null;
+  etaSeconds: number | null;
+  etaCalculatedAt: string | null;
+  lastSuccessfulRouteDistanceMeters: number | null;
+  lastSuccessfulEtaSeconds: number | null;
+  lastSuccessfulEtaCalculatedAt: string | null;
+  idempotentReplay: boolean;
 };
 
 export type HospitalOfferDecision = {
@@ -278,6 +349,14 @@ export const hospitalApi = {
   offerDetail: (offerId: string) =>
     request<HospitalOfferDetail>(
       `/api/ersync/hospitals/me/offers/${encodeURIComponent(offerId)}`,
+    ),
+  clinicalTimeline: (offerId: string, page = 0, size = 50) =>
+    request<HospitalClinicalTimeline>(
+      `/api/ersync/hospitals/me/offers/${encodeURIComponent(offerId)}/clinical-timeline?page=${page}&size=${size}`,
+    ),
+  offerLocation: (offerId: string) =>
+    request<HospitalOfferLocation>(
+      `/api/ersync/hospitals/me/offers/${encodeURIComponent(offerId)}/location`,
     ),
   acceptOffer: (offerId: string, idempotencyKey: string) =>
     request<HospitalOfferDecision>(

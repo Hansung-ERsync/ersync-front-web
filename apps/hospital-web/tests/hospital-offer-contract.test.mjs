@@ -3,13 +3,19 @@ import test from "node:test";
 
 import {
   IDEMPOTENCY_KEY_PATTERN,
+  canReadClinicalTimeline,
+  canReadHospitalLocation,
   clearOfferCommand,
   createOfferIdempotencyKey,
   createWithdrawalPayload,
   getOrCreateOfferCommand,
+  isClinicalRealtimeType,
+  isDestinationRealtimeType,
   isMinimalHospitalOffer,
   shouldRefreshBothOfferLists,
+  shouldRefreshSelectedLocation,
   shouldRefreshSelectedOffer,
+  shouldRefreshSelectedTimeline,
 } from "../app/lib/hospital-offer-contract.js";
 
 class MemoryStorage {
@@ -104,6 +110,20 @@ test("blocks clinical detail for hidden accepted and withdrawn history", () => {
   assert.equal(isMinimalHospitalOffer("HISTORY", "REJECTED"), false);
 });
 
+test("only exposes 06 timeline and exact location to contract-authorized offers", () => {
+  assert.equal(canReadClinicalTimeline("ACTIVE", "PENDING"), true);
+  assert.equal(canReadClinicalTimeline("ACTIVE", "ACCEPTED"), true);
+  assert.equal(canReadClinicalTimeline("HISTORY", "ACCEPTED"), false);
+  assert.equal(canReadClinicalTimeline("HISTORY", "REJECTED"), false);
+  assert.equal(canReadClinicalTimeline("HISTORY", "NO_RESPONSE"), false);
+  assert.equal(canReadClinicalTimeline("HISTORY", "ACCEPTANCE_WITHDRAWN"), false);
+
+  assert.equal(canReadHospitalLocation("ACCEPTED", true), true);
+  assert.equal(canReadHospitalLocation("ACCEPTED", false), false);
+  assert.equal(canReadHospitalLocation("PENDING", false), false);
+  assert.equal(canReadHospitalLocation("ACCEPTANCE_WITHDRAWN", false), false);
+});
+
 test("normalizes every withdrawal reason and validates OTHER detail", () => {
   for (const reason of [
     "BED_SHORTAGE",
@@ -125,18 +145,23 @@ test("normalizes every withdrawal reason and validates OTHER detail", () => {
   assert.throws(() => createWithdrawalPayload("INVALID", null), /사유를 선택/);
 });
 
-test("maps every 04 and 05 realtime signal to authoritative REST refreshes", () => {
+test("maps every 04, 05, and 06 realtime signal to authoritative REST refreshes", () => {
   for (const type of [
     "TRANSPORT_REQUEST_RECEIVED",
     "ETA_UPDATED",
     "DESTINATION_SELECTED",
     "DESTINATION_CHANGED",
     "HOSPITAL_ACCEPTANCE_WITHDRAWN",
+    "VITAL_SIGNS_ADDED",
+    "CONSCIOUSNESS_CHANGED",
+    "PRE_KTAS_CHANGED",
+    "TREATMENT_ADDED",
   ]) {
     assert.equal(shouldRefreshBothOfferLists(type), true);
   }
   assert.equal(shouldRefreshBothOfferLists("connected"), false);
   assert.equal(shouldRefreshBothOfferLists("heartbeat"), false);
+  assert.equal(shouldRefreshBothOfferLists("AMBULANCE_LOCATION_UPDATED"), false);
 
   assert.equal(shouldRefreshSelectedOffer("ETA_UPDATED", "offer-1", "offer-1"), true);
   assert.equal(shouldRefreshSelectedOffer("ETA_UPDATED", "offer-2", "offer-1"), false);
@@ -147,5 +172,51 @@ test("maps every 04 and 05 realtime signal to authoritative REST refreshes", () 
   assert.equal(
     shouldRefreshSelectedOffer("HOSPITAL_ACCEPTANCE_WITHDRAWN", "offer-1", null),
     false,
+  );
+
+  for (const type of [
+    "VITAL_SIGNS_ADDED",
+    "CONSCIOUSNESS_CHANGED",
+    "PRE_KTAS_CHANGED",
+    "TREATMENT_ADDED",
+  ]) {
+    assert.equal(isClinicalRealtimeType(type), true);
+    assert.equal(
+      shouldRefreshSelectedOffer(type, "request-1", "offer-1", "request-1"),
+      true,
+    );
+    assert.equal(
+      shouldRefreshSelectedTimeline(type, "request-1", "request-1"),
+      true,
+    );
+    assert.equal(
+      shouldRefreshSelectedTimeline(type, "request-2", "request-1"),
+      false,
+    );
+  }
+
+  assert.equal(isDestinationRealtimeType("DESTINATION_CHANGED"), true);
+  assert.equal(isDestinationRealtimeType("VITAL_SIGNS_ADDED"), false);
+  assert.equal(
+    shouldRefreshSelectedLocation(
+      "AMBULANCE_LOCATION_UPDATED",
+      "request-1",
+      "offer-1",
+      "request-1",
+    ),
+    true,
+  );
+  assert.equal(
+    shouldRefreshSelectedLocation(
+      "AMBULANCE_LOCATION_UPDATED",
+      "request-2",
+      "offer-1",
+      "request-1",
+    ),
+    false,
+  );
+  assert.equal(
+    shouldRefreshSelectedLocation("ETA_UPDATED", "offer-1", "offer-1", "request-1"),
+    true,
   );
 });

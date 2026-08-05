@@ -43,12 +43,39 @@ export function isMinimalHospitalOffer(view, offerStatus) {
   );
 }
 
+/**
+ * @param {"ACTIVE" | "HISTORY"} view
+ * @param {string} offerStatus
+ */
+export function canReadClinicalTimeline(view, offerStatus) {
+  return (
+    !isMinimalHospitalOffer(view, offerStatus) &&
+    (offerStatus === "PENDING" || offerStatus === "ACCEPTED")
+  );
+}
+
+/**
+ * @param {string} offerStatus
+ * @param {boolean} currentDestination
+ */
+export function canReadHospitalLocation(offerStatus, currentDestination) {
+  return offerStatus === "ACCEPTED" && currentDestination;
+}
+
+const REALTIME_CLINICAL_TYPES = new Set([
+  "VITAL_SIGNS_ADDED",
+  "CONSCIOUSNESS_CHANGED",
+  "PRE_KTAS_CHANGED",
+  "TREATMENT_ADDED",
+]);
+
 const REALTIME_LIST_REFRESH_TYPES = new Set([
   "TRANSPORT_REQUEST_RECEIVED",
   "ETA_UPDATED",
   "DESTINATION_SELECTED",
   "DESTINATION_CHANGED",
   "HOSPITAL_ACCEPTANCE_WITHDRAWN",
+  ...REALTIME_CLINICAL_TYPES,
 ]);
 const REALTIME_DESTINATION_TYPES = new Set([
   "DESTINATION_SELECTED",
@@ -65,13 +92,73 @@ export function shouldRefreshBothOfferLists(type) {
 
 /**
  * @param {string} type
+ */
+export function isDestinationRealtimeType(type) {
+  return REALTIME_DESTINATION_TYPES.has(type);
+}
+
+/**
+ * @param {string} type
+ */
+export function isClinicalRealtimeType(type) {
+  return REALTIME_CLINICAL_TYPES.has(type);
+}
+
+/**
+ * @param {string} type
  * @param {string} aggregateId
  * @param {string | null} selectedOfferId
+ * @param {string | null} selectedTransportRequestId
  */
-export function shouldRefreshSelectedOffer(type, aggregateId, selectedOfferId) {
+export function shouldRefreshSelectedOffer(
+  type,
+  aggregateId,
+  selectedOfferId,
+  selectedTransportRequestId = null,
+) {
   if (!selectedOfferId) return false;
   if (type === "ETA_UPDATED") return aggregateId === selectedOfferId;
+  if (REALTIME_CLINICAL_TYPES.has(type)) {
+    return aggregateId === selectedTransportRequestId;
+  }
   return REALTIME_DESTINATION_TYPES.has(type);
+}
+
+/**
+ * @param {string} type
+ * @param {string} aggregateId
+ * @param {string | null} selectedTransportRequestId
+ */
+export function shouldRefreshSelectedTimeline(
+  type,
+  aggregateId,
+  selectedTransportRequestId,
+) {
+  return (
+    Boolean(selectedTransportRequestId) &&
+    REALTIME_CLINICAL_TYPES.has(type) &&
+    aggregateId === selectedTransportRequestId
+  );
+}
+
+/**
+ * @param {string} type
+ * @param {string} aggregateId
+ * @param {string | null} selectedOfferId
+ * @param {string | null} selectedTransportRequestId
+ */
+export function shouldRefreshSelectedLocation(
+  type,
+  aggregateId,
+  selectedOfferId,
+  selectedTransportRequestId,
+) {
+  if (type === "ETA_UPDATED") return aggregateId === selectedOfferId;
+  return (
+    type === "AMBULANCE_LOCATION_UPDATED" &&
+    Boolean(selectedTransportRequestId) &&
+    aggregateId === selectedTransportRequestId
+  );
 }
 
 /**

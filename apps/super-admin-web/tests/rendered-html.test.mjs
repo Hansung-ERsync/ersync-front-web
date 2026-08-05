@@ -31,6 +31,15 @@ test("does not expose hospital offer, withdrawal, or realtime routes", async () 
   assert.equal(offer.status, 404);
   assert.equal((await offer.json()).code, "COMMON_404");
 
+  for (const suffix of ["clinical-timeline?page=0&size=50", "location"]) {
+    const protectedRead = await requestApp(
+      `/api/ersync/hospitals/me/offers/00112233-4455-6677-8899-aabbccddeeff/${suffix}`,
+      { headers: { accept: "application/json" } },
+    );
+    assert.equal(protectedRead.status, 404);
+    assert.equal((await protectedRead.json()).code, "COMMON_404");
+  }
+
   const withdrawal = await requestApp(
     "/api/ersync/hospitals/me/offers/00112233-4455-6677-8899-aabbccddeeff/withdraw-acceptance",
     {
