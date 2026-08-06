@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-
-const GEOCODE_URL = "https://maps.apigw.ntruss.com/map-geocode/v2/geocode";
+import { createNaverGeocodeRequest } from "../../lib/geocode-contract.js";
 
 type NaverAddress = {
   roadAddress?: string;
@@ -42,18 +41,14 @@ export async function GET(request: NextRequest) {
   const timeout = setTimeout(() => controller.abort(), 8_000);
 
   try {
-    const url = new URL(GEOCODE_URL);
-    url.searchParams.set("query", query);
-    url.searchParams.set("count", "5");
-
-    const response = await fetch(url, {
-      headers: {
-        "x-ncp-apigw-api-key-id": clientId,
-        "x-ncp-apigw-api-key": clientSecret,
-      },
-      cache: "no-store",
-      signal: controller.signal,
-    });
+    const response = await fetch(
+      createNaverGeocodeRequest(
+        query,
+        clientId,
+        clientSecret,
+        controller.signal,
+      ),
+    );
 
     if (!response.ok) {
       return errorResponse(
