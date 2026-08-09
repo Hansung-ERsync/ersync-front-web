@@ -16,20 +16,52 @@ export const INVITATION_ERROR_MESSAGES = Object.freeze({
 const HOSPITAL_CONTACT_PATTERN = /^[0-9+][0-9-]{7,29}$/;
 
 /**
- * 백엔드 계약과 동일하게 연락처 앞뒤 공백만 제거합니다.
- * 국제번호의 선행 +와 사용자가 입력한 하이픈은 보존합니다.
+ * 국내 전화번호는 입력 중 지역번호·국번 길이에 맞춰 하이픈을 붙입니다.
+ * 국제번호는 선행 +와 사용자가 입력한 하이픈을 보존합니다.
+ *
+ * @param {string} value
+ */
+export function formatHospitalContactInput(value) {
+  const input = value.trimStart();
+  if (input.startsWith("+")) {
+    return `+${input.slice(1).replace(/[^0-9-]/g, "")}`.slice(0, 30);
+  }
+
+  const digits = input.replace(/\D/g, "").slice(0, 11);
+  if (digits.startsWith("02")) {
+    if (digits.length <= 2) return digits;
+    if (digits.length <= 5) return `${digits.slice(0, 2)}-${digits.slice(2)}`;
+    if (digits.length <= 9) {
+      return `${digits.slice(0, 2)}-${digits.slice(2, 5)}-${digits.slice(5)}`;
+    }
+    return `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6)}`;
+  }
+
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  if (digits.length <= 10) {
+    return `${digits.slice(0, 3)}-${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`;
+}
+
+/**
+ * 국내 번호는 화면과 동일한 하이픈 형식으로 정리하고, 국제번호의 선행 +와
+ * 사용자가 입력한 하이픈은 보존합니다.
  *
  * @param {string} value
  */
 export function normalizeHospitalContact(value) {
-  return value.trim();
+  return formatHospitalContactInput(value.trim());
 }
 
 /**
  * @param {string} value
  */
 export function isValidHospitalContact(value) {
-  return HOSPITAL_CONTACT_PATTERN.test(normalizeHospitalContact(value));
+  const contact = normalizeHospitalContact(value);
+  const digitCount = contact.replace(/\D/g, "").length;
+  return digitCount >= 8 && HOSPITAL_CONTACT_PATTERN.test(contact);
 }
 
 /**
@@ -39,6 +71,7 @@ export function isValidHospitalContact(value) {
  *   loginId: string;
  *   password: string;
  *   address: string;
+ *   detailAddress?: string;
  *   latitude: number;
  *   longitude: number;
  *   contact: string;
@@ -50,6 +83,7 @@ export function isValidHospitalContact(value) {
  *   loginId: string;
  *   password: string;
  *   address: string;
+ *   detailAddress?: string;
  *   latitude: number;
  *   longitude: number;
  *   contact: string;
@@ -70,10 +104,15 @@ export function createHospitalSignupRequest(
     throw new TypeError("응급실 연락처 형식이 올바르지 않습니다.");
   }
 
-  return {
+  const request = {
     ...values,
     contact,
     contactSharingConsentAccepted: true,
     contactSharingConsentVersion: CONTACT_SHARING_CONSENT_VERSION,
   };
+  const detailAddress = values.detailAddress?.trim();
+  if (detailAddress) request.detailAddress = detailAddress;
+  else delete request.detailAddress;
+
+  return request;
 }

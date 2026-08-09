@@ -16,6 +16,7 @@ import {
   HOSPITAL_CONTACT_PATTERN_SOURCE,
   INVITATION_ERROR_MESSAGES,
   createHospitalSignupRequest,
+  formatHospitalContactInput,
   isValidHospitalContact,
 } from "./lib/hospital-signup-contract.js";
 import { shouldReloadProfileAfterReceivingStatusError } from "./lib/hospital-profile-contract.js";
@@ -63,8 +64,7 @@ function LoadingScreen() {
   return (
     <main className="loading-screen">
       <div className="brand-mark">ER</div>
-      <strong>ERSync를 준비하고 있어요</strong>
-      <span>계정 상태를 안전하게 확인하는 중입니다.</span>
+      <strong>로그인 정보 확인 중</strong>
     </main>
   );
 }
@@ -105,7 +105,7 @@ function AuthScreen({
       setLoginId(payload.loginId);
       setPassword("");
       setSignupComplete(
-        `${result.organizationName} 계정이 생성되었습니다. 최초 수신 상태는 OFF입니다.`,
+        `${result.organizationName} 계정이 생성되었습니다. 처음에는 요청 수신이 꺼져 있습니다.`,
       );
       setView("login");
     } catch (nextError) {
@@ -123,9 +123,9 @@ function AuthScreen({
         {view === "login" ? (
           <>
             <h1>
-              이송 요청을
+              병원 응급실
               <br />
-              바로 받아보세요
+              로그인
             </h1>
             <p className="auth-subtitle">병원 관계자 전용 계정 로그인</p>
 
@@ -206,6 +206,7 @@ function HospitalSignup({
     invitationCode: "",
     loginId: "",
     password: "",
+    detailAddress: "",
     contact: "",
   });
   const [addressQuery, setAddressQuery] = useState("");
@@ -348,6 +349,7 @@ function HospitalSignup({
           loginId: form.loginId.trim().toLowerCase(),
           password: form.password,
           address: selectedAddress.roadAddress,
+          detailAddress: form.detailAddress,
           latitude: selectedAddress.latitude,
           longitude: selectedAddress.longitude,
           contact: form.contact,
@@ -368,8 +370,8 @@ function HospitalSignup({
       <h1 className="signup-title">병원 공용 계정 만들기</h1>
       <p className="auth-subtitle">
         {step === "code"
-          ? "먼저 관리자가 발급한 일회용 가입 코드를 확인해 주세요."
-          : "확인된 병원의 응급실 정보와 로그인 정보를 입력해 주세요."}
+          ? "관리자가 발급한 가입 코드를 입력해 주세요."
+          : "응급실 정보와 로그인 정보를 입력해 주세요."}
       </p>
 
       <div className="signup-progress" aria-label="회원가입 단계">
@@ -390,8 +392,7 @@ function HospitalSignup({
               onChange={(event) => update("invitationCode", event.target.value)}
             />
             <small className="field-hint">
-              코드는 확인 단계에서 소모되지 않으며, 계정 생성이 완료될 때 한 번만
-              사용됩니다.
+              가입 코드는 계정 생성 시 사용됩니다.
             </small>
           </label>
           <ErrorNotice error={codeError} />
@@ -479,6 +480,7 @@ function HospitalSignup({
                 setSelectedAddress(null);
                 setAddressResults([]);
                 setAddressError(null);
+                update("detailAddress", "");
                 setFieldErrors((current) => ({ ...current, address: "" }));
               }}
             />
@@ -517,9 +519,27 @@ function HospitalSignup({
             <div className="selected-address" role="status">
               <span>선택한 응급실 위치</span>
               <strong>{selectedAddress.roadAddress}</strong>
-              <small>병원 탐색과 이송 거리 계산에 필요한 위치가 함께 저장됩니다.</small>
             </div>
           ) : null}
+          <label className="address-detail">
+            <span>세부주소 <small>선택</small></span>
+            <input
+              autoComplete="address-line2"
+              disabled={!selectedAddress}
+              maxLength={200}
+              value={form.detailAddress}
+              aria-invalid={Boolean(fieldErrors.detailAddress)}
+              onChange={(event) => {
+                update("detailAddress", event.target.value);
+                setFieldErrors((current) => ({ ...current, detailAddress: "" }));
+              }}
+            />
+            {fieldErrors.detailAddress ? (
+              <small className="field-error" role="alert">
+                {fieldErrors.detailAddress}
+              </small>
+            ) : null}
+          </label>
           {fieldErrors.address ? (
             <small className="field-error" role="alert">{fieldErrors.address}</small>
           ) : null}
@@ -538,12 +558,13 @@ function HospitalSignup({
             value={form.contact}
             aria-invalid={Boolean(fieldErrors.contact)}
             onChange={(event) => {
-              update("contact", event.target.value);
+              update("contact", formatHospitalContactInput(event.target.value));
               setFieldErrors((current) => ({ ...current, contact: "" }));
             }}
           />
           <small className="field-hint">
-            숫자 또는 +로 시작해 숫자와 하이픈만 입력해 주세요. 예: 02-1234-5678
+            숫자를 입력하면 하이픈이 자동으로 붙습니다. 예: 010-1234-5678,
+            02-1234-5678
           </small>
           {fieldErrors.contact ? (
             <small className="field-error" role="alert">{fieldErrors.contact}</small>
@@ -563,10 +584,6 @@ function HospitalSignup({
           <p>
             ERSync는 병원 응급실 연락처를 수집하고, 이송 요청과 관련된 구급대원이
             병원에 연락할 수 있도록 해당 연락처를 제공합니다.
-          </p>
-          <p className="consent-dev-note">
-            현재 문구는 개발 서버 연동 검증용이며 실제 운영 전 법적 검토를 거친
-            문구와 새 버전으로 함께 변경됩니다.
           </p>
           <label className="consent-check">
             <input
@@ -659,11 +676,21 @@ function HospitalApp({
 
   useEffect(() => {
     const timer = window.setInterval(
-      () => setClock(new Date().toLocaleTimeString("ko-KR", { hour12: false })),
+      () => setClock(new Date().toLocaleTimeString("ko-KR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      })),
       1000,
     );
     const restoreTimer = window.setTimeout(() => {
-      setClock(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
+      setClock(new Date().toLocaleTimeString("ko-KR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }));
       void loadProfile();
     }, 0);
     return () => {
@@ -781,7 +808,10 @@ function HospitalApp({
 
       {view === "dashboard" ? (
         <section className="hospital-dashboard">
-          <HospitalOffers onSessionExpired={onSessionExpired} />
+          <HospitalOffers
+            onSessionExpired={onSessionExpired}
+            receivingStatus={receiving}
+          />
         </section>
       ) : (
         <section className="account-layout">
@@ -800,7 +830,11 @@ function HospitalApp({
               </div>
               <div>
                 <dt>응급실 주소</dt>
-                <dd>{profile?.address || "-"}</dd>
+                <dd>
+                  {[profile?.address, profile?.detailAddress]
+                    .filter(Boolean)
+                    .join(" ") || "-"}
+                </dd>
               </div>
               <div>
                 <dt>응급실 연락처</dt>
@@ -819,8 +853,7 @@ function HospitalApp({
             <span className="eyebrow">업무 설정</span>
             <h2>신규 이송 요청 수신</h2>
             <p>
-              수신을 끄면 새로운 병원 탐색 후보에서만 제외됩니다. 이미 수락했거나
-              이송 중인 요청은 그대로 유지됩니다.
+              수신을 꺼도 진행 중인 이송은 유지됩니다.
             </p>
             <button
               aria-pressed={live}
@@ -831,19 +864,19 @@ function HospitalApp({
             >
               <span>
                 <strong>{live ? "수신 중" : "수신 안 함"}</strong>
-                <small>서버에 저장된 실제 상태</small>
+                <small>현재 설정</small>
               </span>
               <i><b /></i>
             </button>
             <div className="account-status-note">
               <span className={`status-dot status-dot-${receiving.toLowerCase()}`} />
               {profileLoading
-                ? "서버 상태를 확인하고 있습니다."
+                ? "수신 상태 확인 중"
                 : changing
-                  ? "수신 상태를 변경하고 있습니다."
+                  ? "변경 중"
                   : live
-                    ? "새 이송 요청을 실시간으로 받고 있습니다."
-                    : "새 이송 요청 수신이 일시 중지되었습니다."}
+                    ? "새 이송 요청을 받고 있습니다."
+                    : "새 이송 요청을 받지 않습니다."}
             </div>
           </div>
         </section>

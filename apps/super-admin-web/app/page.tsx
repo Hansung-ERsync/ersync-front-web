@@ -1,6 +1,13 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   adminApi,
   ApiError,
@@ -150,6 +157,8 @@ function AdminApp({
     expiryOption: "THREE_DAYS" as "THREE_DAYS" | "SEVEN_DAYS" | "CUSTOM",
     customExpiresAt: "",
   });
+  const organizationLoadRef = useRef(0);
+  const invitationLoadRef = useRef(0);
 
   const handleError = useCallback(
     (nextError: unknown) => {
@@ -166,60 +175,77 @@ function AdminApp({
     [onSessionExpired],
   );
 
-  const loadOrganizations = useCallback(async () => {
+  const loadOrganizations = useCallback(async (targetPage = organizationPage) => {
+    const operation = ++organizationLoadRef.current;
     try {
-      const result = await adminApi.organizations(organizationPage, 20);
+      const result = await adminApi.organizations(targetPage, 20);
+      if (operation !== organizationLoadRef.current) return;
+
+      const totalPages = Math.max(1, result.totalPages);
+      if (targetPage >= totalPages && targetPage > 0) {
+        setOrganizationPage(totalPages - 1);
+        return;
+      }
+
       setOrganizations(result.items);
-      setOrganizationPages(Math.max(1, result.totalPages));
+      setOrganizationPages(totalPages);
       setInviteForm((current) => ({
         ...current,
         organizationId:
-          current.organizationId || result.items[0]?.organizationId || "",
+          result.items.some(
+            (organization) =>
+              organization.organizationId === current.organizationId,
+          )
+            ? current.organizationId
+            : result.items[0]?.organizationId || "",
       }));
     } catch (nextError) {
-      handleError(nextError);
+      if (operation === organizationLoadRef.current) handleError(nextError);
     }
   }, [handleError, organizationPage]);
 
-  const loadInvitations = useCallback(async () => {
+  const loadInvitations = useCallback(async (targetPage = invitationPage) => {
+    const operation = ++invitationLoadRef.current;
     try {
       const result = await adminApi.invitations(
-        invitationPage,
+        targetPage,
         20,
         statusFilter || undefined,
         organizationFilter || undefined,
       );
+      if (operation !== invitationLoadRef.current) return;
+
+      const totalPages = Math.max(1, result.totalPages);
+      if (targetPage >= totalPages && targetPage > 0) {
+        setInvitationPage(totalPages - 1);
+        return;
+      }
+
       setInvitations(result.items);
-      setInvitationPages(Math.max(1, result.totalPages));
+      setInvitationPages(totalPages);
     } catch (nextError) {
-      handleError(nextError);
+      if (operation === invitationLoadRef.current) handleError(nextError);
     }
   }, [handleError, invitationPage, organizationFilter, statusFilter]);
 
   useEffect(() => {
-    const initialLoadTimer = window.setTimeout(() => {
-      void loadOrganizations();
-    }, 0);
-    return () => window.clearTimeout(initialLoadTimer);
-  }, [loadOrganizations]);
-
-  useEffect(() => {
-    const refreshInvitations = () => {
-      if (document.visibilityState === "visible") void loadInvitations();
+    const refreshAdminData = () => {
+      if (document.visibilityState !== "visible") return;
+      void Promise.all([loadOrganizations(), loadInvitations()]);
     };
-    const initialLoadTimer = window.setTimeout(refreshInvitations, 0);
-    const pollingTimer = window.setInterval(refreshInvitations, 10_000);
+    const initialLoadTimer = window.setTimeout(refreshAdminData, 0);
+    const pollingTimer = window.setInterval(refreshAdminData, 10_000);
 
-    window.addEventListener("focus", refreshInvitations);
-    document.addEventListener("visibilitychange", refreshInvitations);
+    window.addEventListener("focus", refreshAdminData);
+    document.addEventListener("visibilitychange", refreshAdminData);
 
     return () => {
       window.clearTimeout(initialLoadTimer);
       window.clearInterval(pollingTimer);
-      window.removeEventListener("focus", refreshInvitations);
-      document.removeEventListener("visibilitychange", refreshInvitations);
+      window.removeEventListener("focus", refreshAdminData);
+      document.removeEventListener("visibilitychange", refreshAdminData);
     };
-  }, [loadInvitations]);
+  }, [loadInvitations, loadOrganizations]);
 
   useEffect(() => {
     const updateCurrentTime = () => setCurrentTime(Date.now());
@@ -244,10 +270,24 @@ function AdminApp({
     setBusy(true);
     setError(null);
     try {
-      await adminApi.createOrganization(orgForm.name.trim(), orgForm.type);
+      const created = await adminApi.createOrganization(
+        orgForm.name.trim(),
+        orgForm.type,
+      );
       setOrgForm((current) => ({ ...current, name: "" }));
-      if (organizationPage === 0) await loadOrganizations();
-      else setOrganizationPage(0);
+      setOrganizationPage(0);
+      setOrganizations((current) => [
+        created,
+        ...current.filter(
+          (organization) =>
+            organization.organizationId !== created.organizationId,
+        ),
+      ].slice(0, 20));
+      setInviteForm((current) => ({
+        ...current,
+        organizationId: created.organizationId,
+      }));
+      await loadOrganizations(0);
     } catch (nextError) {
       handleError(nextError);
     } finally {
@@ -276,8 +316,8 @@ function AdminApp({
             : null,
       });
       setNewCode(result.code);
-      if (invitationPage === 0) await loadInvitations();
-      else setInvitationPage(0);
+      setInvitationPage(0);
+      await loadInvitations(0);
     } catch (nextError) {
       handleError(nextError);
     } finally {
@@ -292,8 +332,15 @@ function AdminApp({
     setBusy(true);
     setError(null);
     try {
-      await adminApi.revokeInvitation(id);
-      await loadInvitations();
+      const revoked = await adminApi.revokeInvitation(id);
+      setInvitations((current) =>
+        current.map((invitation) =>
+          invitation.invitationCodeId === revoked.invitationCodeId
+            ? revoked
+            : invitation,
+        ),
+      );
+      await loadInvitations(invitationPage);
     } catch (nextError) {
       handleError(nextError);
     } finally {

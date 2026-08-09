@@ -10,12 +10,30 @@ export type Session = {
 };
 
 export type OfferView = "ACTIVE" | "HISTORY";
+export type TransportRequestStatus =
+  | "SEARCHING"
+  | "CANDIDATES_EXHAUSTED"
+  | "ACCEPTED_AVAILABLE"
+  | "EN_ROUTE"
+  | "HANDOFF_REQUESTED"
+  | "COMPLETED"
+  | "CANCELLED";
 export type OfferStatus =
   | "PENDING"
   | "ACCEPTED"
   | "REJECTED"
   | "NO_RESPONSE"
   | "ACCEPTANCE_WITHDRAWN";
+export type HospitalOutcome =
+  | "AWAITING_RESPONSE"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "NO_RESPONSE"
+  | "ACCEPTANCE_WITHDRAWN"
+  | "NOT_SELECTED"
+  | "HANDOFF_COMPLETED_HERE"
+  | "COMPLETED_ELSEWHERE"
+  | "TRANSPORT_CANCELLED";
 export type RouteEstimateStatus = "CALCULATING" | "AVAILABLE" | "UNAVAILABLE";
 export type LocationFreshness = "NOT_RECEIVED" | "CURRENT" | "STALE";
 export type RejectionReason =
@@ -51,8 +69,10 @@ export type HospitalOfferListItem = {
   offerId: string;
   transportRequestId: string;
   dispatchAttemptNumber: number | null;
-  transportRequestStatus: string;
+  transportRequestStatus: TransportRequestStatus;
   offerStatus: OfferStatus;
+  hospitalOutcome: HospitalOutcome;
+  processedAt: string | null;
   currentDestination: boolean;
   canWithdraw: boolean;
   canConfirmHandoff: boolean;
@@ -82,6 +102,7 @@ export type HospitalOfferListItem = {
   completedAt: string | null;
   cancelledAt: string | null;
   cancellationReason: CancellationReason | null;
+  cancellationDetail: string | null;
 };
 
 export type VitalSignMeasurement = {
@@ -138,8 +159,10 @@ export type HospitalOfferDetail = {
   offerId: string;
   transportRequestId: string;
   dispatchAttemptNumber: number;
-  transportRequestStatus: string;
+  transportRequestStatus: TransportRequestStatus;
   offerStatus: OfferStatus;
+  hospitalOutcome: HospitalOutcome;
+  processedAt: string | null;
   currentDestination: boolean;
   canWithdraw: boolean;
   canConfirmHandoff: boolean;
@@ -191,6 +214,7 @@ export type HospitalOfferDetail = {
   completedAt: string | null;
   cancelledAt: string | null;
   cancellationReason: CancellationReason | null;
+  cancellationDetail: string | null;
   serverNow: string;
 };
 
@@ -253,7 +277,7 @@ export type HospitalOfferDecision = {
   offerId: string;
   offerStatus: "ACCEPTED" | "REJECTED";
   transportRequestId: string;
-  transportRequestStatus: string;
+  transportRequestStatus: TransportRequestStatus;
   respondedAt: string;
   idempotentReplay: boolean;
 };
@@ -262,7 +286,7 @@ export type HospitalAcceptanceWithdrawal = {
   offerId: string;
   offerStatus: "ACCEPTANCE_WITHDRAWN";
   transportRequestId: string;
-  transportRequestStatus: string;
+  transportRequestStatus: TransportRequestStatus;
   currentDestinationOfferId: string | null;
   reason: WithdrawalReason;
   detail: string | null;
@@ -287,6 +311,7 @@ export type HospitalProfile = {
   organizationName: string;
   hospitalId: string;
   address: string;
+  detailAddress?: string | null;
   latitude: number;
   longitude: number;
   contact: string;
@@ -382,6 +407,7 @@ export const hospitalApi = {
     loginId: string;
     password: string;
     address: string;
+    detailAddress?: string;
     latitude: number;
     longitude: number;
     contact: string;

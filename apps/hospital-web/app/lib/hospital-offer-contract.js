@@ -11,6 +11,179 @@ export const WITHDRAWAL_REASONS = [
 
 const TERMINAL_TRANSPORT_STATUSES = new Set(["COMPLETED", "CANCELLED"]);
 
+const TRANSPORT_REQUEST_STATUS_LABELS = Object.freeze({
+  SEARCHING: "수용 병원 탐색 중",
+  CANDIDATES_EXHAUSTED: "수용 가능 병원 없음",
+  ACCEPTED_AVAILABLE: "목적지 선택 대기",
+  EN_ROUTE: "이송 중",
+  HANDOFF_REQUESTED: "인계 확인 대기",
+  COMPLETED: "인계 완료",
+  CANCELLED: "이송 취소",
+});
+
+/**
+ * @param {string | null | undefined} status
+ */
+export function getTransportRequestStatusLabel(status) {
+  if (!status) return "-";
+  return TRANSPORT_REQUEST_STATUS_LABELS[status] || "확인 필요";
+}
+
+const HOSPITAL_OUTCOME_PRESENTATIONS = Object.freeze({
+  AWAITING_RESPONSE: {
+    label: "응답 대기",
+    title: "응답 대기",
+    description: "수용 가능 여부를 확인해 주세요.",
+    tone: "pending",
+  },
+  ACCEPTED: {
+    label: "수락",
+    title: "수용 가능 응답",
+    description: "구급대원의 병원 선택을 기다리는 중입니다.",
+    tone: "accepted",
+  },
+  REJECTED: {
+    label: "거절",
+    title: "수용 거절",
+    description: "수용 어려움으로 응답했습니다.",
+    tone: "rejected",
+  },
+  NO_RESPONSE: {
+    label: "무응답",
+    title: "무응답 종료",
+    description: "응답 없이 종료되었습니다.",
+    tone: "no_response",
+  },
+  ACCEPTANCE_WITHDRAWN: {
+    label: "수락 철회",
+    title: "수락 철회",
+    description: "수용 가능 응답을 철회했습니다.",
+    tone: "acceptance_withdrawn",
+  },
+  NOT_SELECTED: {
+    label: "타 병원 이송 결정",
+    title: "타 병원으로 이송 결정",
+    description: "다른 병원으로 이송이 결정되었습니다.",
+    tone: "not_selected",
+  },
+  HANDOFF_COMPLETED_HERE: {
+    label: "본원 인계 완료",
+    title: "본원 인계 완료",
+    description: "환자 인계가 완료되었습니다.",
+    tone: "handoff_completed_here",
+  },
+  COMPLETED_ELSEWHERE: {
+    label: "타 병원 이송 완료",
+    title: "타 병원 이송 완료",
+    description: "다른 병원에서 이송이 완료되었습니다.",
+    tone: "completed_elsewhere",
+  },
+  TRANSPORT_CANCELLED: {
+    label: "이송 취소",
+    title: "이송 취소",
+    description: "이송 요청이 취소되었습니다.",
+    tone: "transport_cancelled",
+  },
+});
+
+const OFFER_STATUS_OUTCOME_FALLBACK = Object.freeze({
+  PENDING: "AWAITING_RESPONSE",
+  ACCEPTED: "ACCEPTED",
+  REJECTED: "REJECTED",
+  NO_RESPONSE: "NO_RESPONSE",
+  ACCEPTANCE_WITHDRAWN: "ACCEPTANCE_WITHDRAWN",
+});
+
+/**
+ * 병원별 최종 결과를 카드와 상세 화면에서 일관되게 표시합니다.
+ * 구버전 응답에는 hospitalOutcome이 없을 수 있어 offerStatus를 안전한 대체값으로 사용합니다.
+ *
+ * @param {string | null | undefined} hospitalOutcome
+ * @param {string | null | undefined} offerStatus
+ */
+export function getHospitalOutcomePresentation(hospitalOutcome, offerStatus = null) {
+  const resolved =
+    hospitalOutcome || OFFER_STATUS_OUTCOME_FALLBACK[offerStatus ?? ""] || "AWAITING_RESPONSE";
+  return (
+    HOSPITAL_OUTCOME_PRESENTATIONS[resolved] || {
+      label: "확인 필요",
+      title: "확인 필요",
+      description: "처리 결과를 확인해 주세요.",
+      tone: "pending",
+    }
+  );
+}
+
+/**
+ * 전체 환자정보는 구급대원이 이 병원을 최종 목적지로 선택한 동안에만 엽니다.
+ *
+ * @param {string} offerStatus
+ * @param {boolean} currentDestination
+ * @param {string | null | undefined} transportRequestStatus
+ */
+export function canOpenFullHospitalOffer(
+  offerStatus,
+  currentDestination,
+  transportRequestStatus = null,
+) {
+  return (
+    !TERMINAL_TRANSPORT_STATUSES.has(transportRequestStatus ?? "") &&
+    offerStatus === "ACCEPTED" &&
+    currentDestination
+  );
+}
+
+/**
+ * @param {Record<string, unknown>} offer
+ * @param {"ACTIVE" | "HISTORY"} view
+ * @param {"PENDING" | "ACCEPTED"} activeFilter
+ */
+export function getHospitalOfferActivityTime(offer, view, activeFilter = "PENDING") {
+  const keys =
+    view === "HISTORY"
+      ? ["processedAt", "completedAt", "cancelledAt", "withdrawnAt", "respondedAt", "offeredAt"]
+      : activeFilter === "ACCEPTED"
+        ? ["respondedAt", "offeredAt"]
+        : ["offeredAt", "respondedAt"];
+
+  for (const key of keys) {
+    const value = offer[key];
+    if (typeof value !== "string" || !value) continue;
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Number.NEGATIVE_INFINITY;
+}
+
+/**
+ * @template {Record<string, unknown>} T
+ * @param {T[]} offers
+ * @param {"ACTIVE" | "HISTORY"} view
+ * @param {"PENDING" | "ACCEPTED"} activeFilter
+ * @returns {T[]}
+ */
+export function sortHospitalOffersNewestFirst(offers, view, activeFilter = "PENDING") {
+  return [...offers].sort(
+    (left, right) =>
+      getHospitalOfferActivityTime(right, view, activeFilter) -
+      getHospitalOfferActivityTime(left, view, activeFilter),
+  );
+}
+
+/**
+ * 탭별 개수는 현재 보고 있는 목록과 무관하게 각자의 원본 데이터에서 계산합니다.
+ *
+ * @param {Array<{ offerStatus?: string | null }>} activeOffers
+ * @param {number | null | undefined} historyTotal
+ */
+export function getHospitalOfferQueueCounts(activeOffers, historyTotal = 0) {
+  return {
+    pending: activeOffers.filter((offer) => offer.offerStatus === "PENDING").length,
+    accepted: activeOffers.filter((offer) => offer.offerStatus === "ACCEPTED").length,
+    history: Math.max(0, Number(historyTotal) || 0),
+  };
+}
+
 /**
  * @param {string} reason
  * @param {string | null | undefined} detail

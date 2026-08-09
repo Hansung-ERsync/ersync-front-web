@@ -797,6 +797,20 @@ textarea:focus {
   background: #f59e0b;
 }
 
+.stream-paused {
+  border-color: #cbd5e1;
+  color: #475569;
+}
+
+.stream-paused > span {
+  background: #64748b;
+  box-shadow: 0 0 0 4px #e2e8f0;
+}
+
+.stream-checking > span {
+  background: #94a3b8;
+}
+
 .offer-tabs {
   display: flex;
   align-items: center;
@@ -927,6 +941,22 @@ textarea:focus {
   color: #991b1b;
 }
 
+.offer-status-not_selected,
+.offer-status-completed_elsewhere {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.offer-status-handoff_completed_here {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.offer-status-transport_cancelled {
+  background: var(--red-soft);
+  color: var(--red-dark);
+}
+
 .offer-card-statuses,
 .offer-detail-statuses {
   display: grid;
@@ -1041,6 +1071,25 @@ textarea:focus {
   border-radius: 20px;
   background: #fff;
   box-shadow: 0 30px 80px rgb(5 22 43 / 28%);
+}
+
+.offer-modal-embedded {
+  min-width: 0;
+  align-self: start;
+  overflow: hidden;
+}
+
+.offer-modal-inline {
+  width: 100%;
+  max-height: none;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.offer-modal-inline .offer-modal-header {
+  position: static;
 }
 
 .offer-modal-compact {
@@ -2562,6 +2611,29 @@ input[aria-invalid="true"] {
   font-size: 11.5px;
 }
 
+.address-detail {
+  display: grid;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.address-detail > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--slate);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.address-detail > span small {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .form-submit-error {
   grid-column: 1 / -1;
 }
@@ -3033,6 +3105,99 @@ input[aria-invalid="true"] {
   border-color: #8da8cb;
   background: #f6f9fd;
   box-shadow: inset 3px 0 0 var(--navy);
+}
+
+/* 병원 업무 화면에서는 상태를 색상과 짧은 1회성 효과로 구분합니다. */
+.offer-queue .offer-card.offer-card-attention {
+  border-color: #fdba74;
+  background: #fffdf8;
+  box-shadow: inset 3px 0 0 #ea580c;
+  animation: request-attention 900ms ease-out 3;
+}
+
+.offer-queue .offer-card.offer-card-destination {
+  border-color: #86d7a5;
+  background: #f7fdf9;
+  box-shadow: inset 3px 0 0 var(--green);
+  animation: destination-confirmed 520ms ease-out 1;
+}
+
+.offer-queue .offer-card.offer-card-handoff {
+  border-color: #e9c46a;
+  background: #fffdf5;
+  box-shadow: inset 3px 0 0 #b7791f;
+}
+
+.offer-queue .offer-card.offer-card-handoff .handoff-badge {
+  animation: handoff-attention 1.15s ease-in-out 3;
+}
+
+.offer-queue .offer-card.offer-card-redirected {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+  box-shadow: inset 3px 0 0 #3b82f6;
+}
+
+.offer-queue .offer-card.offer-card-completed {
+  border-color: #bbdfc7;
+  background: #f8fcf9;
+  box-shadow: inset 3px 0 0 var(--green);
+}
+
+.offer-queue .offer-card.offer-card-cancelled {
+  border-color: #fecaca;
+  background: #fffafa;
+  box-shadow: inset 3px 0 0 var(--red-dark);
+}
+
+.offer-modal-inline {
+  animation: destination-panel-enter 360ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+@keyframes request-attention {
+  0%,
+  100% {
+    box-shadow: inset 3px 0 0 #ea580c;
+  }
+  50% {
+    box-shadow:
+      inset 3px 0 0 #ea580c,
+      0 0 0 4px rgba(234, 88, 12, 0.1);
+  }
+}
+
+@keyframes destination-confirmed {
+  0% {
+    background: #eaf8ef;
+    box-shadow:
+      inset 3px 0 0 var(--green),
+      0 0 0 5px rgba(0, 130, 54, 0.1);
+  }
+  100% {
+    background: #f7fdf9;
+    box-shadow: inset 3px 0 0 var(--green);
+  }
+}
+
+@keyframes handoff-attention {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(183, 121, 31, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(183, 121, 31, 0.12);
+  }
+}
+
+@keyframes destination-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .offer-queue .offer-card-statuses {

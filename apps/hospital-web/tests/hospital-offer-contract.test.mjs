@@ -3,12 +3,16 @@ import test from "node:test";
 
 import {
   IDEMPOTENCY_KEY_PATTERN,
+  canOpenFullHospitalOffer,
   canReadClinicalTimeline,
   canReadHospitalLocation,
   clearOfferCommand,
   createOfferIdempotencyKey,
   createWithdrawalPayload,
   getOrCreateOfferCommand,
+  getHospitalOfferQueueCounts,
+  getHospitalOutcomePresentation,
+  getTransportRequestStatusLabel,
   isClinicalRealtimeType,
   isDestinationRealtimeType,
   isMinimalHospitalOffer,
@@ -17,6 +21,7 @@ import {
   shouldRefreshSelectedLocation,
   shouldRefreshSelectedOffer,
   shouldRefreshSelectedTimeline,
+  sortHospitalOffersNewestFirst,
 } from "../app/lib/hospital-offer-contract.js";
 
 class MemoryStorage {
@@ -152,6 +157,105 @@ test("only exposes 06 timeline and exact location to contract-authorized offers"
   assert.equal(canReadHospitalLocation("ACCEPTANCE_WITHDRAWN", false), false);
   assert.equal(canReadClinicalTimeline("HISTORY", "REJECTED", "CANCELLED"), false);
   assert.equal(canReadHospitalLocation("ACCEPTED", true, "COMPLETED"), false);
+});
+
+test("only opens the full patient view after this hospital becomes the destination", () => {
+  assert.equal(canOpenFullHospitalOffer("PENDING", false), false);
+  assert.equal(canOpenFullHospitalOffer("ACCEPTED", false), false);
+  assert.equal(canOpenFullHospitalOffer("ACCEPTED", true), true);
+  assert.equal(canOpenFullHospitalOffer("ACCEPTED", true, "COMPLETED"), false);
+  assert.equal(canOpenFullHospitalOffer("ACCEPTED", true, "CANCELLED"), false);
+});
+
+test("clearly identifies a request that was assigned to another hospital", () => {
+  const presentation = getHospitalOutcomePresentation("NOT_SELECTED", "ACCEPTED");
+
+  assert.equal(presentation.label, "타 병원 이송 결정");
+  assert.equal(presentation.title, "타 병원으로 이송 결정");
+  assert.match(presentation.description, /다른 병원으로 이송이 결정/);
+  assert.equal(
+    getHospitalOutcomePresentation("FUTURE_OUTCOME").label,
+    "확인 필요",
+  );
+});
+
+test("translates every transport status without exposing backend enum codes", () => {
+  assert.deepEqual(
+    [
+      "SEARCHING",
+      "CANDIDATES_EXHAUSTED",
+      "ACCEPTED_AVAILABLE",
+      "EN_ROUTE",
+      "HANDOFF_REQUESTED",
+      "COMPLETED",
+      "CANCELLED",
+    ].map(getTransportRequestStatusLabel),
+    [
+      "수용 병원 탐색 중",
+      "수용 가능 병원 없음",
+      "목적지 선택 대기",
+      "이송 중",
+      "인계 확인 대기",
+      "인계 완료",
+      "이송 취소",
+    ],
+  );
+  assert.equal(getTransportRequestStatusLabel("FUTURE_STATUS"), "확인 필요");
+});
+
+test("sorts every queue newest first using its authoritative activity time", () => {
+  const pending = sortHospitalOffersNewestFirst(
+    [
+      { offerId: "old", offeredAt: "2026-08-09T10:00:00+09:00" },
+      { offerId: "new", offeredAt: "2026-08-09T10:00:02+09:00" },
+    ],
+    "ACTIVE",
+    "PENDING",
+  );
+  assert.deepEqual(pending.map((offer) => offer.offerId), ["new", "old"]);
+
+  const accepted = sortHospitalOffersNewestFirst(
+    [
+      { offerId: "old", respondedAt: "2026-08-09T10:00:01+09:00" },
+      { offerId: "new", respondedAt: "2026-08-09T10:00:03+09:00" },
+    ],
+    "ACTIVE",
+    "ACCEPTED",
+  );
+  assert.deepEqual(accepted.map((offer) => offer.offerId), ["new", "old"]);
+
+  const history = sortHospitalOffersNewestFirst(
+    [
+      { offerId: "old", processedAt: "2026-08-09T10:00:04+09:00" },
+      {
+        offerId: "new",
+        processedAt: "2026-08-09T10:00:05+09:00",
+        respondedAt: "2026-08-09T09:00:00+09:00",
+      },
+    ],
+    "HISTORY",
+    "PENDING",
+  );
+  assert.deepEqual(history.map((offer) => offer.offerId), ["new", "old"]);
+});
+
+test("keeps pending, accepted, and history counts independent of the selected tab", () => {
+  const activeOffers = [
+    { offerStatus: "PENDING" },
+    { offerStatus: "PENDING" },
+    { offerStatus: "ACCEPTED" },
+  ];
+
+  assert.deepEqual(getHospitalOfferQueueCounts(activeOffers, 4), {
+    pending: 2,
+    accepted: 1,
+    history: 4,
+  });
+  assert.deepEqual(getHospitalOfferQueueCounts([], 0), {
+    pending: 0,
+    accepted: 0,
+    history: 0,
+  });
 });
 
 test("normalizes every withdrawal reason and validates OTHER detail", () => {

@@ -67,8 +67,10 @@ export class ApiError extends Error {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method || "GET").toUpperCase();
   const response = await fetch(url, {
     ...init,
+    cache: init?.cache ?? (method === "GET" ? "no-store" : undefined),
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
       ...init?.headers,
@@ -136,4 +138,3 @@ export const adminApi = {
 export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
 }
-
