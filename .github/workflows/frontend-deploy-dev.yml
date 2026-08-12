@@ -1,0 +1,51 @@
+name: Deploy Frontend Dev
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-deploy-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, test, and deploy frontend apps
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+          cache-dependency-path: |
+            apps/hospital-web/package-lock.json
+            apps/super-admin-web/package-lock.json
+
+      - name: Install dependencies
+        run: npm run install:all
+
+      - name: Build and test frontend apps
+        run: npm test
+
+      - name: Deploy hospital Worker
+        working-directory: apps/hospital-web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm exec -- vinext deploy --name ersync-hospital-web-dev
+
+      - name: Deploy super admin Worker
+        working-directory: apps/super-admin-web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: npm exec -- vinext deploy --name ersync-super-admin-web-dev
