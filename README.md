@@ -81,3 +81,14 @@ npm test
 ## 현재 연동 범위
 
 현재는 계정 온보딩·인증, 슈퍼 관리자 조직·가입 코드 관리, 병원 수신 상태 변경까지 연동되어 있습니다. 이송 요청, 환자 상세, 수락·거절, 병상·진료과와 알림 기능은 후속 백엔드 문서에 맞춰 순차적으로 추가합니다.
+
+## 자동 배포
+
+`main` 대상 PR에서는 두 앱을 설치·빌드·테스트만 합니다. `main`에 병합되면 검사를 다시 실행한 뒤 Cloudflare Workers에 자동 배포합니다.
+
+| 웹 | 배포 주소 |
+| --- | --- |
+| 병원 | `https://ersync-hospital-web-dev.<workers-subdomain>.workers.dev` |
+| 관리자 | `https://ersync-super-admin-web-dev.<workers-subdomain>.workers.dev` |
+
+정확한 주소는 첫 배포 후 GitHub Actions 로그에서 확인합니다.
