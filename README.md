@@ -35,7 +35,7 @@ npm run install:all
 백엔드 API 주소를 현재 PowerShell 세션에 설정합니다.
 
 ```powershell
-$env:ERSYNC_API_BASE_URL="http://13.124.194.249"
+$env:ERSYNC_API_BASE_URL="http://ec2-13-124-194-249.ap-northeast-2.compute.amazonaws.com"
 ```
 
 ## 로컬 실행

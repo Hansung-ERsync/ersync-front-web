@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
 export const API_BASE_URL =
-  process.env.ERSYNC_API_BASE_URL ?? "http://13.124.194.249";
+  process.env.ERSYNC_API_BASE_URL ??
+  "http://ec2-13-124-194-249.ap-northeast-2.compute.amazonaws.com";
 
 export const ACCESS_COOKIE = "ersync_hospital_access";
 export const REFRESH_COOKIE = "ersync_hospital_refresh";
