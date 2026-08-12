@@ -33,6 +33,7 @@ import {
   createWithdrawalPayload,
   getOrCreateOfferCommand,
   getHospitalOfferQueueCounts,
+  getHospitalOfferQueueTarget,
   getHospitalOutcomePresentation,
   getTransportRequestStatusLabel,
   isClinicalRealtimeType,
@@ -1808,6 +1809,21 @@ export function HospitalOffers({
           : historyOffer
             ? { offer: historyOffer, view: "HISTORY" as const }
             : null;
+        if (refreshedSelection) {
+          const queueTarget = getHospitalOfferQueueTarget(
+            refreshedSelection.view,
+            refreshedSelection.offer.offerStatus,
+          );
+          currentRef.current = {
+            ...currentRef.current,
+            view: queueTarget.view,
+            page: 0,
+          };
+          setView(queueTarget.view);
+          if (queueTarget.activeFilter) {
+            setActiveFilter(queueTarget.activeFilter);
+          }
+        }
         setPage(0);
         return refreshedSelection;
       }

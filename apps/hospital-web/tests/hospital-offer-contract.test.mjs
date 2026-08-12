@@ -11,6 +11,7 @@ import {
   createWithdrawalPayload,
   getOrCreateOfferCommand,
   getHospitalOfferQueueCounts,
+  getHospitalOfferQueueTarget,
   getHospitalOutcomePresentation,
   getTransportRequestStatusLabel,
   isClinicalRealtimeType,
@@ -255,6 +256,21 @@ test("keeps pending, accepted, and history counts independent of the selected ta
     pending: 0,
     accepted: 0,
     history: 0,
+  });
+});
+
+test("moves the visible queue with the selected patient's lifecycle", () => {
+  assert.deepEqual(getHospitalOfferQueueTarget("ACTIVE", "PENDING"), {
+    view: "ACTIVE",
+    activeFilter: "PENDING",
+  });
+  assert.deepEqual(getHospitalOfferQueueTarget("ACTIVE", "ACCEPTED"), {
+    view: "ACTIVE",
+    activeFilter: "ACCEPTED",
+  });
+  assert.deepEqual(getHospitalOfferQueueTarget("HISTORY", "ACCEPTED"), {
+    view: "HISTORY",
+    activeFilter: null,
   });
 });
 

@@ -12,7 +12,6 @@ import {
   sessionApi,
 } from "./lib/api";
 import {
-  CONTACT_SHARING_CONSENT_VERSION,
   HOSPITAL_CONTACT_PATTERN_SOURCE,
   INVITATION_ERROR_MESSAGES,
   createHospitalSignupRequest,
@@ -579,7 +578,6 @@ function HospitalSignup({
               <span className="consent-kicker">필수 동의</span>
               <h2 id="contact-sharing-consent-title">응급실 연락처 수집·제공</h2>
             </div>
-            <code>{CONTACT_SHARING_CONSENT_VERSION}</code>
           </div>
           <p>
             ERSync는 병원 응급실 연락처를 수집하고, 이송 요청과 관련된 구급대원이

@@ -257,15 +257,6 @@ textarea:focus {
   font-size: 14px;
 }
 
-.auth-footer {
-  display: grid;
-  gap: 10px;
-  margin-top: 19px;
-  color: var(--soft);
-  font-size: 12.5px;
-  text-align: center;
-}
-
 .notice {
   display: grid;
   gap: 4px;

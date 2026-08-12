@@ -27,6 +27,9 @@ const statusLabel: Record<InvitationStatus, string> = {
   REVOKED: "폐기",
 };
 
+const ORGANIZATION_PAGE_SIZE = 10;
+const INVITATION_PAGE_SIZE = 10;
+
 function ErrorNotice({ error }: { error: unknown }) {
   if (!error) return null;
   const apiError = error instanceof ApiError ? error : null;
@@ -118,9 +121,6 @@ function AdminLogin({ onAuthenticated }: { onAuthenticated: (session: Session) =
             {busy ? "확인 중…" : "슈퍼 관리자 로그인"}
           </button>
         </form>
-        <div className="auth-footer">
-          <span>Bootstrap 관리자 계정은 백엔드 운영 담당자에게 문의해 주세요.</span>
-        </div>
       </section>
     </main>
   );
@@ -178,7 +178,10 @@ function AdminApp({
   const loadOrganizations = useCallback(async (targetPage = organizationPage) => {
     const operation = ++organizationLoadRef.current;
     try {
-      const result = await adminApi.organizations(targetPage, 20);
+      const result = await adminApi.organizations(
+        targetPage,
+        ORGANIZATION_PAGE_SIZE,
+      );
       if (operation !== organizationLoadRef.current) return;
 
       const totalPages = Math.max(1, result.totalPages);
@@ -197,7 +200,7 @@ function AdminApp({
               organization.organizationId === current.organizationId,
           )
             ? current.organizationId
-            : result.items[0]?.organizationId || "",
+            : "",
       }));
     } catch (nextError) {
       if (operation === organizationLoadRef.current) handleError(nextError);
@@ -209,7 +212,7 @@ function AdminApp({
     try {
       const result = await adminApi.invitations(
         targetPage,
-        20,
+        INVITATION_PAGE_SIZE,
         statusFilter || undefined,
         organizationFilter || undefined,
       );
@@ -281,11 +284,11 @@ function AdminApp({
         ...current.filter(
           (organization) =>
             organization.organizationId !== created.organizationId,
-        ),
-      ].slice(0, 20));
+          ),
+      ].slice(0, ORGANIZATION_PAGE_SIZE));
       setInviteForm((current) => ({
         ...current,
-        organizationId: created.organizationId,
+        organizationId: "",
       }));
       await loadOrganizations(0);
     } catch (nextError) {
@@ -316,6 +319,10 @@ function AdminApp({
             : null,
       });
       setNewCode(result.code);
+      setInviteForm((current) => ({
+        ...current,
+        organizationId: "",
+      }));
       setInvitationPage(0);
       await loadInvitations(0);
     } catch (nextError) {
@@ -483,10 +490,13 @@ function AdminApp({
               <input
                 disabled
                 value={
-                  selectedOrganization?.type === "EMS_UNIT"
-                    ? "PARAMEDIC"
-                    : "HOSPITAL_STAFF"
+                  selectedOrganization
+                    ? selectedOrganization.type === "EMS_UNIT"
+                      ? "PARAMEDIC"
+                      : "HOSPITAL_STAFF"
+                    : ""
                 }
+                placeholder="조직 선택 후 자동 지정"
               />
             </label>
             <label>
