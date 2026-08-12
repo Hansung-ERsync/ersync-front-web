@@ -185,6 +185,24 @@ export function getHospitalOfferQueueCounts(activeOffers, historyTotal = 0) {
 }
 
 /**
+ * 선택 중인 환자의 최신 상태에 맞춰 우측 목록 탭을 동기화합니다.
+ * 종료 이력에서는 기존 활성 목록 필터를 보존할 수 있도록 null을 반환합니다.
+ *
+ * @param {"ACTIVE" | "HISTORY"} view
+ * @param {string | null | undefined} offerStatus
+ * @returns {{ view: "ACTIVE" | "HISTORY"; activeFilter: "PENDING" | "ACCEPTED" | null }}
+ */
+export function getHospitalOfferQueueTarget(view, offerStatus) {
+  if (view === "HISTORY") {
+    return { view: "HISTORY", activeFilter: null };
+  }
+  return {
+    view: "ACTIVE",
+    activeFilter: offerStatus === "ACCEPTED" ? "ACCEPTED" : "PENDING",
+  };
+}
+
+/**
  * @param {string} reason
  * @param {string | null | undefined} detail
  */
