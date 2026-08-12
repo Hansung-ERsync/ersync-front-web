@@ -25,7 +25,7 @@ npm install
 npm run dev
 ```
 
-기본 백엔드 주소는 `http://13.124.194.249`입니다. 다른 환경을 사용할 때는
+기본 백엔드 주소는 `http://ec2-13-124-194-249.ap-northeast-2.compute.amazonaws.com`입니다. 다른 환경을 사용할 때는
 `.env.example`을 참고해 `ERSYNC_API_BASE_URL`을 설정합니다.
 
 ## 검증

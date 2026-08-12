@@ -20,6 +20,5 @@ npm run build
 npm test
 ```
 
-기본 백엔드 주소는 `http://13.124.194.249`입니다. 토큰은 관리자 웹 전용
+기본 백엔드 주소는 `http://ec2-13-124-194-249.ap-northeast-2.compute.amazonaws.com`입니다. 토큰은 관리자 웹 전용
 `HttpOnly` 쿠키로 보관하며 병원·구급대원 역할의 로그인은 서버에서 거부합니다.
-
