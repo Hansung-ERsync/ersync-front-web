@@ -29,18 +29,26 @@ import {
   canOpenFullHospitalOffer,
   canReadClinicalTimeline,
   canReadHospitalLocation,
+  canRespondToHospitalOffer,
   clearOfferCommand,
   createWithdrawalPayload,
+  getDestinationChangeNotice,
+  getActiveHospitalOfferContext,
   getOrCreateOfferCommand,
   getHospitalOfferQueueCounts,
   getHospitalOfferQueueTarget,
   getHospitalOutcomePresentation,
+  getHospitalWithdrawalMode,
   getTransportRequestStatusLabel,
   isClinicalRealtimeType,
+  isActiveHospitalOfferStatus,
   isDestinationRealtimeType,
   isMinimalHospitalOffer,
+  isNonDestinationActiveHospitalOffer,
+  isRejectedHospitalOfferHistory,
   isTransportLifecycleRealtimeType,
   shouldRefreshBothOfferLists,
+  shouldRecoverHospitalOfferRead,
   shouldRefreshSelectedLocation,
   shouldRefreshSelectedOffer,
   shouldRefreshSelectedTimeline,
@@ -60,6 +68,10 @@ type RealtimeUpdate = {
 
 type DecisionAction = "accept" | "reject" | "withdraw" | "confirm-handoff";
 type OfferSelection = { offer: HospitalOfferListItem; view: OfferView };
+type DestinationChangeNotice = {
+  tone: "warning" | "success" | "info";
+  message: string;
+};
 
 const rejectionReasonLabel: Record<RejectionReason, string> = {
   ER_GENERAL_BED_SHORTAGE: "일반 응급실 병상 부족",
@@ -93,7 +105,6 @@ const enumLabels: Record<string, string> = {
   PENDING: "응답 대기",
   ACCEPTED: "수락",
   REJECTED: "거절",
-  NO_RESPONSE: "무응답",
   ACCEPTANCE_WITHDRAWN: "수락 철회",
   MALE: "남성",
   FEMALE: "여성",
@@ -223,6 +234,17 @@ function cancellationSummary(
   if (!reason) return null;
   const reasonLabel = cancellationReasonLabel[reason];
   return detail?.trim() ? `${reasonLabel} · ${detail.trim()}` : reasonLabel;
+}
+
+function rejectionSummary(
+  reason: RejectionReason | null | undefined,
+  detail: string | null | undefined,
+) {
+  if (!reason) return "거절 사유 확인 필요";
+  const reasonLabel = rejectionReasonLabel[reason];
+  return reason === "OTHER" && detail?.trim()
+    ? `${reasonLabel} · ${detail.trim()}`
+    : reasonLabel;
 }
 
 function formatElapsed(
@@ -364,6 +386,10 @@ function OfferCard({
     offer.offerStatus,
     offer.transportRequestStatus,
   );
+  const rejectedHistory = isRejectedHospitalOfferHistory(
+    view,
+    offer.offerStatus,
+  );
   const lastSuccessfulRoute = lastSuccessfulRouteSummary(
     offer.lastSuccessfulRouteDistanceMeters,
     offer.lastSuccessfulEtaSeconds,
@@ -373,11 +399,27 @@ function OfferCard({
     offer.hospitalOutcome,
     offer.offerStatus,
   );
+  const activeContext =
+    view === "ACTIVE"
+      ? getActiveHospitalOfferContext(
+          offer.offerStatus,
+          offer.currentDestination,
+          offer.transportRequestStatus,
+        )
+      : null;
+  const nonDestinationActive =
+    view === "ACTIVE" &&
+    isNonDestinationActiveHospitalOffer(
+      offer.offerStatus,
+      offer.currentDestination,
+      offer.transportRequestStatus,
+    );
   const cancellation = cancellationSummary(
     offer.cancellationReason,
     offer.cancellationDetail,
   );
   const visualStateClasses = [
+    rejectedHistory ? "offer-card-rejected-minimal" : "",
     view === "ACTIVE" && offer.offerStatus === "PENDING"
       ? "offer-card-attention"
       : "",
@@ -415,59 +457,99 @@ function OfferCard({
         <span className={`offer-status offer-status-${outcome.tone}`}>
           {outcome.label}
         </span>
-        {offer.transportRequestStatus === "HANDOFF_REQUESTED" ? (
-          <span className="handoff-badge">인계 확인 대기</span>
+        {activeContext ? (
+          <span
+            className={`offer-context-badge offer-context-${activeContext.tone}`}
+          >
+            {activeContext.label}
+          </span>
+        ) : null}
+        {view === "ACTIVE" &&
+        offer.offerStatus === "PENDING" &&
+        offer.reRequested ? (
+          <span className="re-requested-badge">재요청</span>
         ) : null}
       </div>
-      <div className="offer-card-main">
-        <strong>
-          {restricted ? outcome.title : patientSummary(offer)}
-        </strong>
-        <span>
-          {restricted
-            ? offer.hospitalOutcome === "TRANSPORT_CANCELLED" && cancellation
-              ? `취소 사유: ${cancellation}`
-              : outcome.description
-            : triageSummary(offer)}
-        </span>
-      </div>
-      <div className="offer-card-route">
-        <strong>{restricted ? "응답 기록" : routeSummary(offer)}</strong>
-        <span>
-          {restricted
-            ? offer.canWithdraw
-              ? "수락 철회 가능"
-              : "처리 완료"
-            : offer.routeEstimateStatus === "UNAVAILABLE" && lastSuccessfulRoute
-              ? `최근 경로 ${lastSuccessfulRoute}`
-            : `직선 ${formatDistance(offer.straightLineDistanceMeters)}`}
-        </span>
-      </div>
-      <div className="offer-card-meta">
-        <span>
-          {view === "HISTORY" && offer.processedAt
-            ? `처리 ${formatDate(offer.processedAt)}`
-            : offer.offeredAt
-              ? `제안 ${formatDate(offer.offeredAt)}`
-              : `응답 ${formatDate(offer.respondedAt)}`}
-        </span>
-        <span>
-          {offer.dispatchAttemptNumber != null
-            ? `탐색 ${offer.dispatchAttemptNumber}차`
-            : offer.withdrawnAt
-              ? `철회 ${formatDate(offer.withdrawnAt)}`
-              : "처리 완료"}
-        </span>
-        {!restricted && offer.lastClinicalUpdateAt ? (
-          <span>임상 갱신 {formatDate(offer.lastClinicalUpdateAt)}</span>
-        ) : null}
-        {offer.handoffRequestedAt ? (
-          <span>인계 요청 {formatDate(offer.handoffRequestedAt)}</span>
-        ) : null}
-        {offer.completedAt ? <span>완료 {formatDate(offer.completedAt)}</span> : null}
-        {offer.cancelledAt ? <span>취소 {formatDate(offer.cancelledAt)}</span> : null}
-      </div>
-      <span className="offer-card-arrow" aria-hidden="true">→</span>
+      {rejectedHistory ? (
+        <>
+          <div className="offer-card-main">
+            <strong>
+              {rejectionSummary(offer.rejectionReason, offer.rejectionDetail)}
+            </strong>
+          </div>
+          <div className="offer-card-meta">
+            <span>
+              처리 {formatDate(offer.processedAt ?? offer.respondedAt)}
+            </span>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="offer-card-main">
+            <strong>{restricted ? outcome.title : patientSummary(offer)}</strong>
+            <span>
+              {restricted
+                ? offer.hospitalOutcome === "TRANSPORT_CANCELLED" && cancellation
+                  ? `취소 사유: ${cancellation}`
+                  : outcome.description
+                : triageSummary(offer)}
+            </span>
+          </div>
+          <div className="offer-card-route">
+            <strong>
+              {restricted
+                ? "응답 기록"
+                : nonDestinationActive
+                  ? "동적 경로·ETA 비공개"
+                  : routeSummary(offer)}
+            </strong>
+            <span>
+              {restricted
+                ? offer.canWithdraw
+                  ? "수락 철회 가능"
+                  : "처리 완료"
+                : !nonDestinationActive &&
+                    offer.routeEstimateStatus === "UNAVAILABLE" &&
+                    lastSuccessfulRoute
+                  ? `최근 경로 ${lastSuccessfulRoute}`
+                  : `직선 ${formatDistance(offer.straightLineDistanceMeters)}`}
+            </span>
+          </div>
+          <div className="offer-card-meta">
+            <span>
+              {view === "ACTIVE" &&
+              offer.offerStatus === "PENDING" &&
+              offer.reRequested
+                ? `재요청 ${formatDate(offer.lastRequestedAt)}`
+                : view === "HISTORY" && offer.processedAt
+                  ? `처리 ${formatDate(offer.processedAt)}`
+                  : offer.offeredAt
+                    ? `제안 ${formatDate(offer.offeredAt)}`
+                    : `응답 ${formatDate(offer.respondedAt)}`}
+            </span>
+            <span>
+              {offer.dispatchAttemptNumber != null
+                ? `탐색 ${offer.dispatchAttemptNumber}차`
+                : offer.withdrawnAt
+                  ? `철회 ${formatDate(offer.withdrawnAt)}`
+                  : "처리 완료"}
+            </span>
+            {!restricted && offer.lastClinicalUpdateAt ? (
+              <span>임상 갱신 {formatDate(offer.lastClinicalUpdateAt)}</span>
+            ) : null}
+            {offer.handoffRequestedAt ? (
+              <span>인계 요청 {formatDate(offer.handoffRequestedAt)}</span>
+            ) : null}
+            {offer.completedAt ? (
+              <span>완료 {formatDate(offer.completedAt)}</span>
+            ) : null}
+            {offer.cancelledAt ? (
+              <span>취소 {formatDate(offer.cancelledAt)}</span>
+            ) : null}
+          </div>
+          <span className="offer-card-arrow" aria-hidden="true">→</span>
+        </>
+      )}
     </button>
   );
 }
@@ -763,6 +845,7 @@ function AmbulanceLocationPanel({
 
 function WithdrawalForm({
   decisionBusy,
+  emergency,
   reason,
   detail,
   onCancel,
@@ -771,6 +854,7 @@ function WithdrawalForm({
   onSubmit,
 }: {
   decisionBusy: DecisionAction | null;
+  emergency: boolean;
   reason: WithdrawalReason | "";
   detail: string;
   onCancel: () => void;
@@ -781,10 +865,12 @@ function WithdrawalForm({
   return (
     <form className="reject-form withdrawal-form" onSubmit={onSubmit}>
       <div className="detail-section-title">
-        <h3>수락 철회 사유</h3>
+        <h3>{emergency ? "수용 불가 긴급 고지 사유" : "수락 철회 사유"}</h3>
       </div>
       <p className="withdrawal-warning">
-        수락을 철회하면 병원 탐색이 다시 시작될 수 있습니다.
+        {emergency
+          ? "현재 목적지에서 즉시 해제되며 구급대원에게 긴급 알림이 전송됩니다."
+          : "수락을 철회하면 구급대원의 수락 병원 목록에서 제외됩니다."}
       </p>
       <label>
         <span>사유</span>
@@ -836,7 +922,13 @@ function WithdrawalForm({
           }
           type="submit"
         >
-          {decisionBusy === "withdraw" ? "철회 처리 중…" : "수락 철회 확정"}
+          {decisionBusy === "withdraw"
+            ? emergency
+              ? "긴급 고지 전송 중…"
+              : "철회 처리 중…"
+            : emergency
+              ? "수용 불가 긴급 고지 전송"
+              : "수락 철회 확정"}
         </button>
       </div>
     </form>
@@ -955,9 +1047,11 @@ function MinimalHistoryModal({
   onWithdrawalDetail: (detail: string) => void;
   onWithdraw: (event: FormEvent) => void;
 }) {
-  const transportEnded =
-    offer.transportRequestStatus === "COMPLETED" ||
-    offer.transportRequestStatus === "CANCELLED";
+  const withdrawalMode = getHospitalWithdrawalMode(
+    offer.canWithdraw,
+    offer.currentDestination,
+    offer.transportRequestStatus,
+  );
   const outcome = getHospitalOutcomePresentation(
     offer.hospitalOutcome,
     offer.offerStatus,
@@ -1045,6 +1139,15 @@ function MinimalHistoryModal({
                   </dd>
                 </div>
               ) : null}
+              {offer.rejectionReason ? (
+                <div>
+                  <dt>거절 사유</dt>
+                  <dd>
+                    {rejectionReasonLabel[offer.rejectionReason]}
+                    {offer.rejectionDetail ? ` · ${offer.rejectionDetail}` : ""}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           </div>
 
@@ -1066,6 +1169,17 @@ function MinimalHistoryModal({
             </section>
           ) : null}
 
+          {offer.rejectionReason ? (
+            <section className="detail-section rejection-result">
+              <div className="detail-section-title">
+                <h3>수용 거절 사유</h3>
+                <time>응답 {formatDate(offer.respondedAt)}</time>
+              </div>
+              <strong>{rejectionReasonLabel[offer.rejectionReason]}</strong>
+              {offer.rejectionDetail ? <p>{offer.rejectionDetail}</p> : null}
+            </section>
+          ) : null}
+
           {decisionNotice ? (
             <div className="decision-notice" role="status">
               {decisionNotice}
@@ -1073,11 +1187,12 @@ function MinimalHistoryModal({
           ) : null}
           <OfferError error={decisionError} />
 
-          {offer.canWithdraw && !transportEnded ? (
+          {withdrawalMode ? (
             showWithdrawal ? (
               <WithdrawalForm
                 decisionBusy={decisionBusy}
                 detail={withdrawalDetail}
+                emergency={withdrawalMode === "EMERGENCY"}
                 onCancel={onCancelWithdrawal}
                 onDetail={onWithdrawalDetail}
                 onReason={onWithdrawalReason}
@@ -1092,7 +1207,9 @@ function MinimalHistoryModal({
                   onClick={onShowWithdrawal}
                   type="button"
                 >
-                  수락 철회
+                  {withdrawalMode === "EMERGENCY"
+                    ? "수용 불가 긴급 고지"
+                    : "수락 철회"}
                 </button>
               </div>
             )
@@ -1175,6 +1292,31 @@ function OfferDetailModal({
   const outcome = detail
     ? getHospitalOutcomePresentation(detail.hospitalOutcome, detail.offerStatus)
     : null;
+  const activeContext = detail
+    ? getActiveHospitalOfferContext(
+        detail.offerStatus,
+        detail.currentDestination,
+        detail.transportRequestStatus,
+      )
+    : null;
+  const nonDestinationActive = detail
+    ? isNonDestinationActiveHospitalOffer(
+        detail.offerStatus,
+        detail.currentDestination,
+        detail.transportRequestStatus,
+      )
+    : false;
+  const reRequestedPending = Boolean(
+    detail?.offerStatus === "PENDING" && detail.timing.reRequested,
+  );
+  const withdrawalMode = detail
+    ? getHospitalWithdrawalMode(
+        detail.canWithdraw,
+        detail.currentDestination,
+        detail.transportRequestStatus,
+      )
+    : null;
+  const routeStatusClass = detail?.route.status?.toLowerCase() ?? "restricted";
 
   return (
     <div
@@ -1212,6 +1354,16 @@ function OfferDetailModal({
                 <span className={`offer-status offer-status-${outcome?.tone ?? "pending"}`}>
                   {outcome?.label}
                 </span>
+                {activeContext ? (
+                  <span
+                    className={`offer-context-badge offer-context-${activeContext.tone}`}
+                  >
+                    {activeContext.label}
+                  </span>
+                ) : null}
+                {reRequestedPending ? (
+                  <span className="re-requested-badge">재요청</span>
+                ) : null}
               </div>
               <div>
                 <small>Pre-KTAS</small>
@@ -1231,7 +1383,7 @@ function OfferDetailModal({
               </div>
             </div>
 
-            {detail.handoffRequestedAt ? (
+            {detail.handoffRequestedAt && detail.currentDestination ? (
               <section className="detail-section handoff-confirmation-section">
                 <div className="detail-section-title">
                   <h3>환자 인계 요청</h3>
@@ -1243,11 +1395,34 @@ function OfferDetailModal({
               </section>
             ) : null}
 
+            {nonDestinationActive && activeContext ? (
+              <div className="privacy-restriction-card">
+                <strong>{activeContext.description}</strong>
+                <span>
+                  목적지 선택 시점까지 공개된 임상정보만 표시합니다. 정확한 구급차
+                  위치와 동적 경로·ETA는 현재 목적지 병원에만 제공됩니다.
+                </span>
+              </div>
+            ) : null}
+
+            {reRequestedPending && detail ? (
+              <div className="re-request-notice">
+                <strong>이 요청이 다시 전달되었습니다.</strong>
+                <span>
+                  재요청 {formatDate(detail.timing.lastRequestedAt)} · 현재 표시되는
+                  임상정보는 재요청 시점까지 공개된 내용입니다.
+                </span>
+              </div>
+            ) : null}
+
             <section className="detail-section">
               <div className="detail-section-title">
                 <h3>환자·발생 정보</h3>
                 <div className="detail-times">
                   <time>접수 {formatDate(detail.timing.requestReceivedAt)}</time>
+                  {reRequestedPending ? (
+                    <time>재요청 {formatDate(detail.timing.lastRequestedAt)}</time>
+                  ) : null}
                   <time>임상 갱신 {formatDate(detail.timing.lastClinicalUpdateAt)}</time>
                 </div>
               </div>
@@ -1306,9 +1481,14 @@ function OfferDetailModal({
 
             <section className="detail-section">
               <div className="detail-section-title"><h3>이송 거리·ETA</h3></div>
-              <div className={`route-detail route-detail-${detail.route.status.toLowerCase()}`}>
+              <div className={`route-detail route-detail-${routeStatusClass}`}>
                 <div><small>직선거리</small><strong>{formatDistance(detail.route.straightLineDistanceMeters)}</strong></div>
-                {detail.route.status === "AVAILABLE" ? (
+                {nonDestinationActive ? (
+                  <div className="route-status-message">
+                    <small>동적 경로·ETA</small>
+                    <strong>현재 목적지 병원에만 제공</strong>
+                  </div>
+                ) : detail.route.status === "AVAILABLE" ? (
                   <>
                     <div><small>도로거리</small><strong>{formatDistance(detail.route.routeDistanceMeters)}</strong></div>
                     <div><small>예상 도착</small><strong>{formatEta(detail.route.etaSeconds)}</strong></div>
@@ -1320,7 +1500,8 @@ function OfferDetailModal({
                   </div>
                 )}
               </div>
-              {detail.route.status !== "AVAILABLE" &&
+              {!nonDestinationActive &&
+              detail.route.status !== "AVAILABLE" &&
               detail.route.lastSuccessfulRouteDistanceMeters != null &&
               detail.route.lastSuccessfulEtaSeconds != null &&
                 detail.route.lastSuccessfulCalculatedAt ? (
@@ -1383,11 +1564,12 @@ function OfferDetailModal({
                       : "환자 인계 완료 확인"}
                 </button>
               </div>
-            ) : detail.canWithdraw ? (
+            ) : withdrawalMode ? (
               showWithdrawal ? (
                 <WithdrawalForm
                   decisionBusy={decisionBusy}
                   detail={withdrawalDetail}
+                  emergency={withdrawalMode === "EMERGENCY"}
                   onCancel={onCancelWithdrawal}
                   onDetail={onWithdrawalDetail}
                   onReason={onWithdrawalReason}
@@ -1402,11 +1584,16 @@ function OfferDetailModal({
                     onClick={onShowWithdrawal}
                     type="button"
                   >
-                    수락 철회
+                    {withdrawalMode === "EMERGENCY"
+                      ? "수용 불가 긴급 고지"
+                      : "수락 철회"}
                   </button>
                 </div>
               )
-            ) : detail.offerStatus === "PENDING" ? (
+            ) : canRespondToHospitalOffer(
+                detail.offerStatus,
+                detail.transportRequestStatus,
+              ) ? (
               showReject ? (
                 <form className="reject-form" onSubmit={onReject}>
                   <div className="detail-section-title"><h3>거절 사유 선택</h3></div>
@@ -1500,6 +1687,36 @@ function DashboardOfferDetail({
   const detailOutcome = detail
     ? getHospitalOutcomePresentation(detail.hospitalOutcome, detail.offerStatus)
     : null;
+  const activeContext = detail
+    ? getActiveHospitalOfferContext(
+        detail.offerStatus,
+        detail.currentDestination,
+        detail.transportRequestStatus,
+      )
+    : null;
+  const nonDestinationActive = detail
+    ? isNonDestinationActiveHospitalOffer(
+        detail.offerStatus,
+        detail.currentDestination,
+        detail.transportRequestStatus,
+      )
+    : false;
+  const reRequestedPending = Boolean(
+    detail?.offerStatus === "PENDING" && detail.timing.reRequested,
+  );
+  const rejectedHistory = selectedOffer.offerStatus === "REJECTED";
+  const selectedWithdrawalMode = getHospitalWithdrawalMode(
+    selectedOffer.canWithdraw,
+    selectedOffer.currentDestination,
+    selectedOffer.transportRequestStatus,
+  );
+  const withdrawalMode = detail
+    ? getHospitalWithdrawalMode(
+        detail.canWithdraw,
+        detail.currentDestination,
+        detail.transportRequestStatus,
+      )
+    : null;
 
   return (
     <section className="offer-primary">
@@ -1514,29 +1731,66 @@ function DashboardOfferDetail({
             {selectedOutcome.label}
           </span>
           <h1>{selectedOutcome.title}</h1>
-          <p>{selectedOutcome.description}</p>
-          <dl>
-            <div><dt>병원 결과</dt><dd>{selectedOutcome.label}</dd></div>
-            <div>
-              <dt>전체 이송 상태</dt>
-              <dd>{getTransportRequestStatusLabel(selectedOffer.transportRequestStatus)}</dd>
-            </div>
-            <div><dt>처리 시각</dt><dd>{formatDate(selectedOffer.processedAt || selectedOffer.completedAt || selectedOffer.cancelledAt || selectedOffer.respondedAt)}</dd></div>
-            {selectedOffer.cancellationReason ? (
+          {rejectedHistory ? (
+            <dl>
               <div>
-                <dt>취소 사유</dt>
+                <dt>거절 사유</dt>
                 <dd>
-                  {cancellationSummary(
-                    selectedOffer.cancellationReason,
-                    selectedOffer.cancellationDetail,
+                  {rejectionSummary(
+                    selectedOffer.rejectionReason,
+                    selectedOffer.rejectionDetail,
                   )}
                 </dd>
               </div>
-            ) : null}
-          </dl>
-          {selectedOffer.canWithdraw ? (
+              <div>
+                <dt>처리 시각</dt>
+                <dd>
+                  {formatDate(
+                    selectedOffer.processedAt ?? selectedOffer.respondedAt,
+                  )}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <>
+              <p>{selectedOutcome.description}</p>
+              <dl>
+                <div><dt>병원 결과</dt><dd>{selectedOutcome.label}</dd></div>
+                <div>
+                  <dt>전체 이송 상태</dt>
+                  <dd>{getTransportRequestStatusLabel(selectedOffer.transportRequestStatus)}</dd>
+                </div>
+                <div><dt>처리 시각</dt><dd>{formatDate(selectedOffer.processedAt || selectedOffer.completedAt || selectedOffer.cancelledAt || selectedOffer.respondedAt)}</dd></div>
+                {selectedOffer.cancellationReason ? (
+                  <div>
+                    <dt>취소 사유</dt>
+                    <dd>
+                      {cancellationSummary(
+                        selectedOffer.cancellationReason,
+                        selectedOffer.cancellationDetail,
+                      )}
+                    </dd>
+                  </div>
+                ) : null}
+                {selectedOffer.withdrawalReason ? (
+                  <div>
+                    <dt>수락 철회 사유</dt>
+                    <dd>
+                      {withdrawalReasonLabel[selectedOffer.withdrawalReason]}
+                      {selectedOffer.withdrawalDetail
+                        ? ` · ${selectedOffer.withdrawalDetail}`
+                        : ""}
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+            </>
+          )}
+          {!rejectedHistory && selectedWithdrawalMode ? (
             <button className="button button-danger" onClick={onOpenFull} type="button">
-              수락 철회
+              {selectedWithdrawalMode === "EMERGENCY"
+                ? "수용 불가 긴급 고지"
+                : "수락 철회"}
             </button>
           ) : null}
         </div>
@@ -1554,7 +1808,16 @@ function DashboardOfferDetail({
                 <span className={`offer-status offer-status-${detailOutcome?.tone ?? "pending"}`}>
                   {detailOutcome?.label}
                 </span>
-                {detail.canConfirmHandoff ? <span className="handoff-badge">인계 확인 필요</span> : null}
+                {activeContext ? (
+                  <span
+                    className={`offer-context-badge offer-context-${activeContext.tone}`}
+                  >
+                    {activeContext.label}
+                  </span>
+                ) : null}
+                {reRequestedPending ? (
+                  <span className="re-requested-badge">재요청</span>
+                ) : null}
               </div>
               <h1>{label(detail.incident.primarySymptom)}</h1>
               <p>
@@ -1562,16 +1825,49 @@ function DashboardOfferDetail({
               </p>
             </div>
             <div className="patient-hero-meta">
+              {reRequestedPending ? (
+                <span>재요청 {formatDate(detail.timing.lastRequestedAt)}</span>
+              ) : null}
               <span>접수 {formatDate(detail.timing.requestReceivedAt)}</span>
               <strong>{patientSummary(detail.patient)}</strong>
             </div>
           </header>
 
+          {reRequestedPending ? (
+            <div className="dashboard-contract-notice re-request-notice">
+              <strong>이 요청이 다시 전달되었습니다.</strong>
+              <span>
+                재요청 {formatDate(detail.timing.lastRequestedAt)} · 현재 표시되는
+                임상정보는 재요청 시점까지 공개된 내용입니다.
+              </span>
+            </div>
+          ) : null}
+
+          {nonDestinationActive && activeContext ? (
+            <div className="dashboard-contract-notice privacy-restriction-card">
+              <strong>{activeContext.description}</strong>
+              <span>
+                임상정보는 목적지 선택 시점 기준이며, 정확한 위치와 동적
+                경로·ETA는 표시하지 않습니다.
+              </span>
+            </div>
+          ) : null}
+
           <div className="transport-metrics">
             <div>
               <small>예상 도착</small>
-              <strong>{formatEta(detail.route.etaSeconds)}</strong>
-              <span>{detail.route.status === "CALCULATING" ? "경로 계산 중" : "도로 기준"}</span>
+              <strong>
+                {nonDestinationActive ? "비공개" : formatEta(detail.route.etaSeconds)}
+              </strong>
+              <span>
+                {nonDestinationActive
+                  ? "현재 목적지만 제공"
+                  : detail.route.status === "CALCULATING"
+                    ? "경로 계산 중"
+                    : detail.route.status === "AVAILABLE"
+                      ? "도로 기준"
+                      : "경로 정보 없음"}
+              </span>
             </div>
             <div>
               <small>요청 경과</small>
@@ -1631,7 +1927,19 @@ function DashboardOfferDetail({
           <OfferError error={decisionError} />
 
           <div className="dashboard-decision-bar">
-            {detail.offerStatus === "PENDING" ? (
+            {canOpenFullHospitalOffer(
+              detail.offerStatus,
+              detail.currentDestination,
+              detail.transportRequestStatus,
+            ) ? (
+              <button className="button button-muted" onClick={onOpenFull} type="button">
+                임상 상세 보기
+              </button>
+            ) : null}
+            {canRespondToHospitalOffer(
+              detail.offerStatus,
+              detail.transportRequestStatus,
+            ) ? (
               <>
                 <button className="button button-danger" disabled={decisionBusy !== null} onClick={onReject} type="button">
                   수용 어려움
@@ -1642,8 +1950,12 @@ function DashboardOfferDetail({
               </>
             ) : detail.canConfirmHandoff ? (
               <button className="button button-primary" onClick={onOpenFull} type="button">환자 인계 확인</button>
-            ) : detail.canWithdraw ? (
-              <button className="button button-danger" onClick={onOpenFull} type="button">수락 철회</button>
+            ) : withdrawalMode ? (
+              <button className="button button-danger" onClick={onOpenFull} type="button">
+                {withdrawalMode === "EMERGENCY"
+                  ? "수용 불가 긴급 고지"
+                  : "수락 철회"}
+              </button>
             ) : null}
           </div>
         </>
@@ -1696,10 +2008,13 @@ export function HospitalOffers({
   >("");
   const [withdrawalDetail, setWithdrawalDetail] = useState("");
   const [streamState, setStreamState] = useState<StreamState>("CONNECTING");
+  const [destinationNotice, setDestinationNotice] =
+    useState<DestinationChangeNotice | null>(null);
   const protectedDataGenerationRef = useRef(0);
   const selectionGenerationRef = useRef(0);
   const locationRequestInFlightRef = useRef(false);
   const realtimeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const activeOffersRef = useRef<HospitalOfferListItem[]>([]);
   const currentRef = useRef({
     view,
     page,
@@ -1765,6 +2080,7 @@ export function HospitalOffers({
         return;
       }
       if (targetView === "ACTIVE") {
+        activeOffersRef.current = next.items;
         setActiveResult(next);
       } else {
         setHistoryResult(next);
@@ -1794,6 +2110,7 @@ export function HospitalOffers({
         hospitalApi.offers("ACTIVE", 0, 20),
         hospitalApi.offers("HISTORY", 0, 20),
       ]);
+      activeOffersRef.current = active.items;
       setActiveResult(active);
       setHistoryResult(history);
       const selectedOfferKey = currentRef.current.selectedOfferKey;
@@ -1850,7 +2167,10 @@ export function HospitalOffers({
         setDetailError(nextError);
       }
       if (isSessionError(nextError)) expiredRef.current();
-      if (nextError instanceof ApiError && nextError.code === "TRANSPORT_005") {
+      if (
+        nextError instanceof ApiError &&
+        shouldRecoverHospitalOfferRead(nextError.code)
+      ) {
         setSelectedOffer(null);
         setSelectedOfferView(null);
         setSelectedOfferId(null);
@@ -1886,7 +2206,10 @@ export function HospitalOffers({
         setTimeline(null);
       }
       if (isSessionError(nextError)) expiredRef.current();
-      if (nextError instanceof ApiError && nextError.code === "TRANSPORT_005") {
+      if (
+        nextError instanceof ApiError &&
+        shouldRecoverHospitalOfferRead(nextError.code)
+      ) {
         setSelectedOffer(null);
         setSelectedOfferView(null);
         setSelectedOfferId(null);
@@ -1917,7 +2240,10 @@ export function HospitalOffers({
         setLocation(null);
       }
       if (isSessionError(nextError)) expiredRef.current();
-      if (nextError instanceof ApiError && nextError.code === "TRANSPORT_005") {
+      if (
+        nextError instanceof ApiError &&
+        shouldRecoverHospitalOfferRead(nextError.code)
+      ) {
         setSelectedOffer(null);
         setSelectedOfferView(null);
         setSelectedOfferId(null);
@@ -2024,11 +2350,20 @@ export function HospitalOffers({
 
   const handleRealtimeUpdate = useCallback(async (update: RealtimeUpdate) => {
     const selectionGeneration = selectionGenerationRef.current;
+    const previousActiveOffers = activeOffersRef.current;
     if (
       isDestinationRealtimeType(update.type) ||
       isTransportLifecycleRealtimeType(update.type)
     ) {
       await refreshVisibleSelection();
+      if (update.type === "DESTINATION_CHANGED") {
+        setDestinationNotice(
+          getDestinationChangeNotice(
+            previousActiveOffers,
+            activeOffersRef.current,
+          ) as DestinationChangeNotice,
+        );
+      }
       return;
     }
 
@@ -2053,6 +2388,25 @@ export function HospitalOffers({
     const selectedRequestId =
       refreshedSelection?.offer.transportRequestId ??
       beforeRefresh.selectedTransportRequestId;
+
+    if (
+      update.type === "TRANSPORT_REQUEST_RECEIVED" &&
+      refreshedSelection &&
+      shouldRefreshSelectedOffer(
+        update.type,
+        update.aggregateId,
+        selectedOfferId,
+        selectedRequestId,
+      )
+    ) {
+      await loadSelectedResources(
+        refreshedSelection,
+        currentRef.current.timelinePage,
+        true,
+        selectionGeneration,
+      );
+      return;
+    }
 
     if (
       isClinicalRealtimeType(update.type) &&
@@ -2271,7 +2625,15 @@ export function HospitalOffers({
   };
 
   const accept = async () => {
-    if (!detail || detail.offerStatus !== "PENDING") return;
+    if (
+      !detail ||
+      !canRespondToHospitalOffer(
+        detail.offerStatus,
+        detail.transportRequestStatus,
+      )
+    ) {
+      return;
+    }
     const command = getOrCreateOfferCommand(
       window.sessionStorage,
       detail.offerId,
@@ -2291,7 +2653,9 @@ export function HospitalOffers({
       if (isSessionError(nextError)) expiredRef.current();
       if (
         nextError instanceof ApiError &&
-        ["TRANSPORT_005", "TRANSPORT_006", "COMMON_005"].includes(nextError.code)
+        ["TRANSPORT_004", "TRANSPORT_005", "TRANSPORT_006", "COMMON_005"].includes(
+          nextError.code,
+        )
       ) {
         clearOfferCommand(window.sessionStorage, detail.offerId, command.idempotencyKey);
         await refreshAfterDecision();
@@ -2355,7 +2719,16 @@ export function HospitalOffers({
 
   const reject = async (event: FormEvent) => {
     event.preventDefault();
-    if (!detail || detail.offerStatus !== "PENDING" || !rejectReason) return;
+    if (
+      !detail ||
+      !canRespondToHospitalOffer(
+        detail.offerStatus,
+        detail.transportRequestStatus,
+      ) ||
+      !rejectReason
+    ) {
+      return;
+    }
     const payload = {
       reason: rejectReason,
       detail: rejectReason === "OTHER" ? rejectDetail.trim() : null,
@@ -2379,13 +2752,16 @@ export function HospitalOffers({
       clearOfferCommand(window.sessionStorage, detail.offerId, command.idempotencyKey);
       setDecisionNotice("수용 어려움으로 응답했습니다.");
       setShowReject(false);
+      setShowFullDetail(false);
       await refreshAfterDecision();
     } catch (nextError) {
       setDecisionError(nextError);
       if (isSessionError(nextError)) expiredRef.current();
       if (
         nextError instanceof ApiError &&
-        ["TRANSPORT_005", "TRANSPORT_006", "COMMON_005"].includes(nextError.code)
+        ["TRANSPORT_004", "TRANSPORT_005", "TRANSPORT_006", "COMMON_005"].includes(
+          nextError.code,
+        )
       ) {
         clearOfferCommand(window.sessionStorage, detail.offerId, command.idempotencyKey);
         await refreshAfterDecision();
@@ -2401,8 +2777,12 @@ export function HospitalOffers({
   const withdrawAcceptance = async (event: FormEvent) => {
     event.preventDefault();
     const offerId = detail?.offerId ?? selectedOffer?.offerId;
-    const canWithdraw = detail?.canWithdraw ?? selectedOffer?.canWithdraw;
-    if (!offerId || !canWithdraw || !withdrawalReason) return;
+    const withdrawalMode = getHospitalWithdrawalMode(
+      detail?.canWithdraw ?? selectedOffer?.canWithdraw ?? false,
+      detail?.currentDestination ?? selectedOffer?.currentDestination ?? false,
+      detail?.transportRequestStatus ?? selectedOffer?.transportRequestStatus,
+    );
+    if (!offerId || !withdrawalMode || !withdrawalReason) return;
 
     let payload: { reason: WithdrawalReason; detail: string | null };
     try {
@@ -2432,8 +2812,10 @@ export function HospitalOffers({
       );
       clearOfferCommand(window.sessionStorage, offerId, command.idempotencyKey);
       setDecisionNotice(
-        response.searchRestarted
-          ? "수락을 철회했습니다. 병원 탐색이 다시 시작됩니다."
+        withdrawalMode === "EMERGENCY"
+          ? response.searchRestarted
+            ? "수용 불가 긴급 고지를 전송했습니다. 목적지에서 해제되고 병원 재검색이 시작됩니다."
+            : "수용 불가 긴급 고지를 전송했습니다."
           : "수락을 철회했습니다.",
       );
       setShowWithdrawal(false);
@@ -2504,10 +2886,12 @@ export function HospitalOffers({
     const filteredItems =
       view === "HISTORY"
         ? (historyResult?.items ?? [])
-        : (activeResult?.items ?? []).filter((offer) =>
-            activeFilter === "PENDING"
-              ? offer.offerStatus === "PENDING"
-              : offer.offerStatus === "ACCEPTED",
+        : (activeResult?.items ?? []).filter(
+            (offer) =>
+              isActiveHospitalOfferStatus(offer.offerStatus) &&
+              (activeFilter === "PENDING"
+                ? offer.offerStatus === "PENDING"
+                : offer.offerStatus === "ACCEPTED"),
           );
     return sortHospitalOffersNewestFirst(filteredItems, view, activeFilter);
   }, [activeFilter, activeResult?.items, historyResult?.items, view]);
@@ -2523,6 +2907,8 @@ export function HospitalOffers({
   const showInlineFullDetail = Boolean(
     selectedOfferId &&
       detail &&
+      detail.offerStatus === "ACCEPTED" &&
+      detail.currentDestination &&
       canOpenFullHospitalOffer(
         detail.offerStatus,
         detail.currentDestination,
@@ -2559,6 +2945,24 @@ export function HospitalOffers({
 
   return (
     <>
+      {destinationNotice ? (
+        <div
+          className={`destination-change-notice destination-change-${destinationNotice.tone}`}
+          role="alert"
+        >
+          <div>
+            <strong>목적지 변경 알림</strong>
+            <span>{destinationNotice.message}</span>
+          </div>
+          <button
+            aria-label="목적지 변경 알림 닫기"
+            onClick={() => setDestinationNotice(null)}
+            type="button"
+          >
+            확인
+          </button>
+        </div>
+      ) : null}
       <div className="offer-workspace">
         {showInlineFullDetail && detail ? (
           <OfferDetailModal
@@ -2775,7 +3179,11 @@ export function HospitalOffers({
       {selectedOfferId &&
       showReject &&
       !showFullDetail &&
-      detail?.offerStatus === "PENDING" ? (
+      detail &&
+      canRespondToHospitalOffer(
+        detail.offerStatus,
+        detail.transportRequestStatus,
+      ) ? (
         <RejectionDecisionModal
           decisionBusy={decisionBusy}
           decisionError={decisionError}
@@ -2788,7 +3196,12 @@ export function HospitalOffers({
         />
       ) : null}
 
-      {showAcceptConfirm && detail ? (
+      {showAcceptConfirm &&
+      detail &&
+      canRespondToHospitalOffer(
+        detail.offerStatus,
+        detail.transportRequestStatus,
+      ) ? (
         <div className="offer-modal-backdrop confirmation-backdrop" onMouseDown={() => setShowAcceptConfirm(false)}>
           <section
             aria-labelledby="accept-confirm-title"
@@ -2822,6 +3235,7 @@ export function HospitalOffers({
       ) : null}
 
       {selectedOffer &&
+      selectedOffer.offerStatus !== "REJECTED" &&
       showFullDetail &&
       (!selectedOfferId ||
         !detail ||

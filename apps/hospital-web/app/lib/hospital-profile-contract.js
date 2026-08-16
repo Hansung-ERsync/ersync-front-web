@@ -1,6 +1,19 @@
 // @ts-check
 
 /**
+ * nullable 상세주소는 빈 줄이나 문자열 "null" 없이 기본주소 뒤에만 붙입니다.
+ *
+ * @param {string | null | undefined} address
+ * @param {string | null | undefined} detailAddress
+ */
+export function formatHospitalProfileAddress(address, detailAddress) {
+  const base = address?.trim();
+  if (!base) return "-";
+  const detail = detailAddress?.trim();
+  return detail ? `${base} ${detail}` : base;
+}
+
+/**
  * 수신 상태 변경 중 전송 오류나 서버 오류가 나면 실제 반영 여부가 불명확하므로
  * 프로필 GET으로 서버의 최종 상태를 다시 확인해야 합니다.
  *

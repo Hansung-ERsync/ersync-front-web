@@ -2,9 +2,25 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  formatHospitalProfileAddress,
   getRealtimeConnectionPresentation,
   shouldReloadProfileAfterReceivingStatusError,
 } from "../app/lib/hospital-profile-contract.js";
+
+test("shows nullable detail addresses without blank or null text", () => {
+  assert.equal(
+    formatHospitalProfileAddress("서울특별시 성북구", " 본관 1층 "),
+    "서울특별시 성북구 본관 1층",
+  );
+  assert.equal(
+    formatHospitalProfileAddress("서울특별시 성북구", null),
+    "서울특별시 성북구",
+  );
+  assert.equal(
+    formatHospitalProfileAddress("서울특별시 성북구", "   "),
+    "서울특별시 성북구",
+  );
+});
 
 test("reloads the hospital profile after ambiguous receiving-status failures", () => {
   assert.equal(shouldReloadProfileAfterReceivingStatusError(undefined), true);
