@@ -12,7 +12,6 @@ export type Session = {
 export type OfferView = "ACTIVE" | "HISTORY";
 export type TransportRequestStatus =
   | "SEARCHING"
-  | "CANDIDATES_EXHAUSTED"
   | "ACCEPTED_AVAILABLE"
   | "EN_ROUTE"
   | "HANDOFF_REQUESTED"
@@ -22,13 +21,11 @@ export type OfferStatus =
   | "PENDING"
   | "ACCEPTED"
   | "REJECTED"
-  | "NO_RESPONSE"
   | "ACCEPTANCE_WITHDRAWN";
 export type HospitalOutcome =
   | "AWAITING_RESPONSE"
   | "ACCEPTED"
   | "REJECTED"
-  | "NO_RESPONSE"
   | "ACCEPTANCE_WITHDRAWN"
   | "NOT_SELECTED"
   | "HANDOFF_COMPLETED_HERE"
@@ -68,41 +65,45 @@ export type PageResult<T> = {
 export type HospitalOfferListItem = {
   offerId: string;
   transportRequestId: string;
-  dispatchAttemptNumber: number | null;
+  dispatchAttemptNumber?: number | null;
   transportRequestStatus: TransportRequestStatus;
   offerStatus: OfferStatus;
   hospitalOutcome: HospitalOutcome;
   processedAt: string | null;
   currentDestination: boolean;
   canWithdraw: boolean;
-  canConfirmHandoff: boolean;
-  ageStatus: "EXACT" | "ESTIMATED" | "UNKNOWN" | null;
-  ageYears: number | null;
-  sex: "MALE" | "FEMALE" | "UNKNOWN" | null;
-  preKtasClassificationStatus:
+  canConfirmHandoff?: boolean;
+  ageStatus?: "EXACT" | "ESTIMATED" | "UNKNOWN" | null;
+  ageYears?: number | null;
+  sex?: "MALE" | "FEMALE" | "UNKNOWN" | null;
+  preKtasClassificationStatus?:
     | "COMPLETED"
     | "EMERGENCY_UNFINISHED"
     | null;
-  preKtasLevel: number | null;
-  preKtasExceptionReason: string | null;
-  straightLineDistanceMeters: number | null;
-  routeEstimateStatus: RouteEstimateStatus | null;
-  routeDistanceMeters: number | null;
-  etaSeconds: number | null;
-  lastSuccessfulRouteDistanceMeters: number | null;
-  lastSuccessfulEtaSeconds: number | null;
-  lastSuccessfulEtaCalculatedAt: string | null;
-  lastClinicalUpdateAt: string | null;
-  offeredAt: string | null;
+  preKtasLevel?: number | null;
+  preKtasExceptionReason?: string | null;
+  straightLineDistanceMeters?: number | null;
+  routeEstimateStatus?: RouteEstimateStatus | null;
+  routeDistanceMeters?: number | null;
+  etaSeconds?: number | null;
+  lastSuccessfulRouteDistanceMeters?: number | null;
+  lastSuccessfulEtaSeconds?: number | null;
+  lastSuccessfulEtaCalculatedAt?: string | null;
+  lastClinicalUpdateAt?: string | null;
+  offeredAt?: string | null;
+  reRequested?: boolean;
+  lastRequestedAt?: string | null;
   respondedAt: string | null;
-  withdrawalReason: WithdrawalReason | null;
-  withdrawalDetail: string | null;
-  withdrawnAt: string | null;
-  handoffRequestedAt: string | null;
-  completedAt: string | null;
-  cancelledAt: string | null;
-  cancellationReason: CancellationReason | null;
-  cancellationDetail: string | null;
+  rejectionReason: RejectionReason | null;
+  rejectionDetail: string | null;
+  withdrawalReason?: WithdrawalReason | null;
+  withdrawalDetail?: string | null;
+  withdrawnAt?: string | null;
+  handoffRequestedAt?: string | null;
+  completedAt?: string | null;
+  cancelledAt?: string | null;
+  cancellationReason?: CancellationReason | null;
+  cancellationDetail?: string | null;
 };
 
 export type VitalSignMeasurement = {
@@ -191,7 +192,7 @@ export type HospitalOfferDetail = {
   };
   route: {
     straightLineDistanceMeters: number;
-    status: RouteEstimateStatus;
+    status: RouteEstimateStatus | null;
     routeDistanceMeters: number | null;
     etaSeconds: number | null;
     calculatedAt: string | null;
@@ -202,6 +203,8 @@ export type HospitalOfferDetail = {
   timing: {
     requestReceivedAt: string;
     offeredAt: string;
+    reRequested: boolean;
+    lastRequestedAt: string;
     lastClinicalUpdateAt: string;
   };
   rejectionReason: RejectionReason | null;
@@ -311,7 +314,7 @@ export type HospitalProfile = {
   organizationName: string;
   hospitalId: string;
   address: string;
-  detailAddress?: string | null;
+  detailAddress: string | null;
   latitude: number;
   longitude: number;
   contact: string;

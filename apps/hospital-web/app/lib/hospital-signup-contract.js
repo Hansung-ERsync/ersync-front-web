@@ -2,6 +2,8 @@
 
 /** @type {"CONTACT_SHARING_DEV_1.0"} */
 export const CONTACT_SHARING_CONSENT_VERSION = "CONTACT_SHARING_DEV_1.0";
+export const HOSPITAL_ADDRESS_MAX_LENGTH = 255;
+export const HOSPITAL_DETAIL_ADDRESS_MAX_LENGTH = 200;
 
 export const HOSPITAL_CONTACT_PATTERN_SOURCE = "[0-9+][0-9-]{7,29}";
 
@@ -104,13 +106,29 @@ export function createHospitalSignupRequest(
     throw new TypeError("응급실 연락처 형식이 올바르지 않습니다.");
   }
 
+  const address = values.address.trim();
+  if (!address) {
+    throw new TypeError("응급실 기본주소를 입력해 주세요.");
+  }
+  if (address.length > HOSPITAL_ADDRESS_MAX_LENGTH) {
+    throw new TypeError("응급실 기본주소는 255자 이하로 입력해 주세요.");
+  }
+
+  const detailAddress = values.detailAddress?.trim();
+  if (
+    detailAddress &&
+    detailAddress.length > HOSPITAL_DETAIL_ADDRESS_MAX_LENGTH
+  ) {
+    throw new TypeError("세부주소는 200자 이하로 입력해 주세요.");
+  }
+
   const request = {
     ...values,
+    address,
     contact,
     contactSharingConsentAccepted: true,
     contactSharingConsentVersion: CONTACT_SHARING_CONSENT_VERSION,
   };
-  const detailAddress = values.detailAddress?.trim();
   if (detailAddress) request.detailAddress = detailAddress;
   else delete request.detailAddress;
 

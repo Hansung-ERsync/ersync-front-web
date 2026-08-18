@@ -13,12 +13,17 @@ import {
 } from "./lib/api";
 import {
   HOSPITAL_CONTACT_PATTERN_SOURCE,
+  HOSPITAL_ADDRESS_MAX_LENGTH,
+  HOSPITAL_DETAIL_ADDRESS_MAX_LENGTH,
   INVITATION_ERROR_MESSAGES,
   createHospitalSignupRequest,
   formatHospitalContactInput,
   isValidHospitalContact,
 } from "./lib/hospital-signup-contract.js";
-import { shouldReloadProfileAfterReceivingStatusError } from "./lib/hospital-profile-contract.js";
+import {
+  formatHospitalProfileAddress,
+  shouldReloadProfileAfterReceivingStatusError,
+} from "./lib/hospital-profile-contract.js";
 import { HospitalOffers } from "./components/HospitalOffers";
 
 type AuthView = "login" | "signup";
@@ -325,6 +330,15 @@ function HospitalSignup({
     }
     if (!selectedAddress) {
       nextErrors.address = "검색 결과에서 응급실 주소를 선택해 주세요.";
+    } else if (
+      selectedAddress.roadAddress.trim().length > HOSPITAL_ADDRESS_MAX_LENGTH
+    ) {
+      nextErrors.address = "응급실 기본주소는 255자 이하로 선택해 주세요.";
+    }
+    if (
+      form.detailAddress.trim().length > HOSPITAL_DETAIL_ADDRESS_MAX_LENGTH
+    ) {
+      nextErrors.detailAddress = "세부주소는 200자 이하로 입력해 주세요.";
     }
     if (!isValidHospitalContact(form.contact)) {
       nextErrors.contact = "연락처 형식을 확인해 주세요. 예: 02-1234-5678";
@@ -471,7 +485,7 @@ function HospitalSignup({
           <div className="address-search">
             <input
               aria-invalid={Boolean(fieldErrors.address)}
-              maxLength={200}
+              maxLength={HOSPITAL_ADDRESS_MAX_LENGTH}
               placeholder="도로명, 건물명 또는 병원명"
               value={addressQuery}
               onChange={(event) => {
@@ -525,7 +539,7 @@ function HospitalSignup({
             <input
               autoComplete="address-line2"
               disabled={!selectedAddress}
-              maxLength={200}
+              maxLength={HOSPITAL_DETAIL_ADDRESS_MAX_LENGTH}
               value={form.detailAddress}
               aria-invalid={Boolean(fieldErrors.detailAddress)}
               onChange={(event) => {
@@ -829,9 +843,10 @@ function HospitalApp({
               <div>
                 <dt>응급실 주소</dt>
                 <dd>
-                  {[profile?.address, profile?.detailAddress]
-                    .filter(Boolean)
-                    .join(" ") || "-"}
+                  {formatHospitalProfileAddress(
+                    profile?.address,
+                    profile?.detailAddress,
+                  )}
                 </dd>
               </div>
               <div>

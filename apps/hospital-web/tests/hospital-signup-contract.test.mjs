@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   CONTACT_SHARING_CONSENT_VERSION,
+  HOSPITAL_ADDRESS_MAX_LENGTH,
+  HOSPITAL_DETAIL_ADDRESS_MAX_LENGTH,
   INVITATION_ERROR_MESSAGES,
   createHospitalSignupRequest,
   formatHospitalContactInput,
@@ -55,6 +57,34 @@ test("omits a blank optional detail address", () => {
   );
 
   assert.equal("detailAddress" in request, false);
+});
+
+test("enforces the 19 address length contract after trimming", () => {
+  assert.equal(HOSPITAL_ADDRESS_MAX_LENGTH, 255);
+  assert.equal(HOSPITAL_DETAIL_ADDRESS_MAX_LENGTH, 200);
+  assert.throws(
+    () =>
+      createHospitalSignupRequest(
+        { ...validSignup, address: ` ${"가".repeat(256)} ` },
+        true,
+      ),
+    /기본주소는 255자 이하/,
+  );
+  assert.throws(
+    () =>
+      createHospitalSignupRequest(
+        { ...validSignup, detailAddress: ` ${"나".repeat(201)} ` },
+        true,
+      ),
+    /세부주소는 200자 이하/,
+  );
+  assert.equal(
+    createHospitalSignupRequest(
+      { ...validSignup, address: "  서울특별시 성북구  " },
+      true,
+    ).address,
+    "서울특별시 성북구",
+  );
 });
 
 test("rejects missing consent and out-of-contract contacts", () => {

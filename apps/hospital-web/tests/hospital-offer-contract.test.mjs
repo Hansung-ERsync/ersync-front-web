@@ -6,19 +6,27 @@ import {
   canOpenFullHospitalOffer,
   canReadClinicalTimeline,
   canReadHospitalLocation,
+  canRespondToHospitalOffer,
   clearOfferCommand,
   createOfferIdempotencyKey,
   createWithdrawalPayload,
+  getDestinationChangeNotice,
+  getActiveHospitalOfferContext,
   getOrCreateOfferCommand,
   getHospitalOfferQueueCounts,
   getHospitalOfferQueueTarget,
   getHospitalOutcomePresentation,
+  getHospitalWithdrawalMode,
   getTransportRequestStatusLabel,
+  isActiveHospitalOfferStatus,
   isClinicalRealtimeType,
   isDestinationRealtimeType,
   isMinimalHospitalOffer,
+  isNonDestinationActiveHospitalOffer,
+  isRejectedHospitalOfferHistory,
   isTransportLifecycleRealtimeType,
   shouldRefreshBothOfferLists,
+  shouldRecoverHospitalOfferRead,
   shouldRefreshSelectedLocation,
   shouldRefreshSelectedOffer,
   shouldRefreshSelectedTimeline,
@@ -128,12 +136,14 @@ test("reuses the same handoff confirmation key after a lost response", () => {
   assert.match(first.idempotencyKey, IDEMPOTENCY_KEY_PATTERN);
 });
 
-test("blocks clinical detail for hidden accepted and withdrawn history", () => {
+test("blocks protected reads for rejected and every closed hospital offer", () => {
   assert.equal(isMinimalHospitalOffer("HISTORY", "ACCEPTED"), true);
   assert.equal(isMinimalHospitalOffer("HISTORY", "ACCEPTANCE_WITHDRAWN"), true);
   assert.equal(isMinimalHospitalOffer("ACTIVE", "ACCEPTANCE_WITHDRAWN"), true);
   assert.equal(isMinimalHospitalOffer("ACTIVE", "ACCEPTED"), false);
-  assert.equal(isMinimalHospitalOffer("HISTORY", "REJECTED"), false);
+  assert.equal(isMinimalHospitalOffer("HISTORY", "REJECTED"), true);
+  assert.equal(isMinimalHospitalOffer("ACTIVE", "REJECTED"), true);
+  assert.equal(isMinimalHospitalOffer("HISTORY", "UNKNOWN_CLOSED"), true);
   assert.equal(
     isMinimalHospitalOffer("HISTORY", "REJECTED", "CANCELLED"),
     true,
@@ -144,12 +154,18 @@ test("blocks clinical detail for hidden accepted and withdrawn history", () => {
   );
 });
 
+test("identifies only rejected HISTORY cards for the 18 minimal presentation", () => {
+  assert.equal(isRejectedHospitalOfferHistory("HISTORY", "REJECTED"), true);
+  assert.equal(isRejectedHospitalOfferHistory("ACTIVE", "REJECTED"), false);
+  assert.equal(isRejectedHospitalOfferHistory("HISTORY", "UNKNOWN_CLOSED"), false);
+  assert.equal(isRejectedHospitalOfferHistory("HISTORY", "ACCEPTED"), false);
+});
+
 test("only exposes 06 timeline and exact location to contract-authorized offers", () => {
   assert.equal(canReadClinicalTimeline("ACTIVE", "PENDING"), true);
   assert.equal(canReadClinicalTimeline("ACTIVE", "ACCEPTED"), true);
   assert.equal(canReadClinicalTimeline("HISTORY", "ACCEPTED"), false);
   assert.equal(canReadClinicalTimeline("HISTORY", "REJECTED"), false);
-  assert.equal(canReadClinicalTimeline("HISTORY", "NO_RESPONSE"), false);
   assert.equal(canReadClinicalTimeline("HISTORY", "ACCEPTANCE_WITHDRAWN"), false);
 
   assert.equal(canReadHospitalLocation("ACCEPTED", true), true);
@@ -160,12 +176,136 @@ test("only exposes 06 timeline and exact location to contract-authorized offers"
   assert.equal(canReadHospitalLocation("ACCEPTED", true, "COMPLETED"), false);
 });
 
-test("only opens the full patient view after this hospital becomes the destination", () => {
-  assert.equal(canOpenFullHospitalOffer("PENDING", false), false);
-  assert.equal(canOpenFullHospitalOffer("ACCEPTED", false), false);
+test("keeps full detail available for active pending and accepted offers", () => {
+  assert.equal(canOpenFullHospitalOffer("PENDING", false), true);
+  assert.equal(canOpenFullHospitalOffer("ACCEPTED", false), true);
   assert.equal(canOpenFullHospitalOffer("ACCEPTED", true), true);
+  assert.equal(canOpenFullHospitalOffer("REJECTED", false), false);
   assert.equal(canOpenFullHospitalOffer("ACCEPTED", true, "COMPLETED"), false);
   assert.equal(canOpenFullHospitalOffer("ACCEPTED", true, "CANCELLED"), false);
+});
+
+test("allows pending decisions only before handoff is requested", () => {
+  assert.equal(canRespondToHospitalOffer("PENDING", "SEARCHING"), true);
+  assert.equal(canRespondToHospitalOffer("PENDING", "EN_ROUTE"), true);
+  assert.equal(canRespondToHospitalOffer("PENDING", "HANDOFF_REQUESTED"), false);
+  assert.equal(canRespondToHospitalOffer("PENDING", "COMPLETED"), false);
+  assert.equal(canRespondToHospitalOffer("ACCEPTED", "EN_ROUTE"), false);
+});
+
+test("uses emergency withdrawal only for the current destination in transit", () => {
+  assert.equal(
+    getHospitalWithdrawalMode(true, true, "EN_ROUTE"),
+    "EMERGENCY",
+  );
+  assert.equal(
+    getHospitalWithdrawalMode(true, false, "EN_ROUTE"),
+    "STANDARD",
+  );
+  assert.equal(
+    getHospitalWithdrawalMode(true, true, "HANDOFF_REQUESTED"),
+    null,
+  );
+  assert.equal(getHospitalWithdrawalMode(true, true, "COMPLETED"), null);
+  assert.equal(getHospitalWithdrawalMode(false, false, "SEARCHING"), null);
+});
+
+test("announces destination changes to both the previous and new destination", () => {
+  assert.deepEqual(
+    getDestinationChangeNotice(
+      [{ offerId: "offer-a", currentDestination: true }],
+      [{ offerId: "offer-a", currentDestination: false }],
+    ),
+    {
+      tone: "warning",
+      message:
+        "목적지가 다른 병원으로 변경되었습니다. 기존 수락은 유지되며 다시 선택될 수 있습니다.",
+    },
+  );
+  assert.deepEqual(
+    getDestinationChangeNotice(
+      [{ offerId: "offer-b", currentDestination: false }],
+      [{ offerId: "offer-b", currentDestination: true }],
+    ),
+    {
+      tone: "success",
+      message: "우리 병원이 새로운 목적지로 선택되었습니다.",
+    },
+  );
+});
+
+test("keeps only pending and accepted offers in the new ACTIVE flow", () => {
+  assert.equal(isActiveHospitalOfferStatus("PENDING"), true);
+  assert.equal(isActiveHospitalOfferStatus("ACCEPTED"), true);
+  assert.equal(isActiveHospitalOfferStatus("REJECTED"), false);
+  assert.equal(isActiveHospitalOfferStatus("ACCEPTANCE_WITHDRAWN"), false);
+  assert.equal(isActiveHospitalOfferStatus(null), false);
+});
+
+test("presents every active destination state from the 15 contract", () => {
+  assert.deepEqual(
+    getActiveHospitalOfferContext("PENDING", false, "EN_ROUTE"),
+    {
+      label: "다른 병원으로 이동 중 · 응답 가능",
+      description:
+        "다른 병원으로 이동 중이지만 인계 요청 전까지 수락하거나 거절할 수 있습니다.",
+      tone: "pending",
+    },
+  );
+  assert.deepEqual(
+    getActiveHospitalOfferContext("ACCEPTED", false, "EN_ROUTE"),
+    {
+      label: "수락 완료 · 다른 병원으로 이동 중",
+      description:
+        "수락 상태는 유지되며 인계 요청 전까지 수락을 철회할 수 있습니다.",
+      tone: "accepted",
+    },
+  );
+  assert.equal(
+    getActiveHospitalOfferContext("ACCEPTED", true, "EN_ROUTE")?.label,
+    "우리 병원으로 이동 중",
+  );
+  assert.equal(
+    getActiveHospitalOfferContext("ACCEPTED", true, "HANDOFF_REQUESTED")
+      ?.label,
+    "인계 확인 대기",
+  );
+  assert.equal(
+    getActiveHospitalOfferContext("PENDING", false, "HANDOFF_REQUESTED")
+      ?.label,
+    "다른 병원 인계 진행 중",
+  );
+  assert.equal(
+    getActiveHospitalOfferContext("PENDING", false, "SEARCHING"),
+    null,
+  );
+  assert.equal(
+    getActiveHospitalOfferContext("REJECTED", false, "HANDOFF_REQUESTED"),
+    null,
+  );
+});
+
+test("freezes clinical presentation and hides dynamic route for non-destinations", () => {
+  assert.equal(
+    isNonDestinationActiveHospitalOffer("PENDING", false, "EN_ROUTE"),
+    true,
+  );
+  assert.equal(
+    isNonDestinationActiveHospitalOffer("ACCEPTED", false, "HANDOFF_REQUESTED"),
+    true,
+  );
+  assert.equal(
+    isNonDestinationActiveHospitalOffer("ACCEPTED", true, "EN_ROUTE"),
+    false,
+  );
+  assert.equal(
+    isNonDestinationActiveHospitalOffer("REJECTED", false, "EN_ROUTE"),
+    false,
+  );
+  assert.equal(canReadClinicalTimeline("ACTIVE", "PENDING", "EN_ROUTE"), true);
+  assert.equal(canReadClinicalTimeline("ACTIVE", "ACCEPTED", "EN_ROUTE"), true);
+  assert.equal(canReadHospitalLocation("PENDING", false, "EN_ROUTE"), false);
+  assert.equal(canReadHospitalLocation("ACCEPTED", false, "EN_ROUTE"), false);
 });
 
 test("clearly identifies a request that was assigned to another hospital", () => {
@@ -184,7 +324,6 @@ test("translates every transport status without exposing backend enum codes", ()
   assert.deepEqual(
     [
       "SEARCHING",
-      "CANDIDATES_EXHAUSTED",
       "ACCEPTED_AVAILABLE",
       "EN_ROUTE",
       "HANDOFF_REQUESTED",
@@ -193,7 +332,6 @@ test("translates every transport status without exposing backend enum codes", ()
     ].map(getTransportRequestStatusLabel),
     [
       "수용 병원 탐색 중",
-      "수용 가능 병원 없음",
       "목적지 선택 대기",
       "이송 중",
       "인계 확인 대기",
@@ -214,6 +352,27 @@ test("sorts every queue newest first using its authoritative activity time", () 
     "PENDING",
   );
   assert.deepEqual(pending.map((offer) => offer.offerId), ["new", "old"]);
+
+  const reRequestedPending = sortHospitalOffersNewestFirst(
+    [
+      {
+        offerId: "new-offer",
+        offeredAt: "2026-08-09T10:00:02+09:00",
+        lastRequestedAt: "2026-08-09T10:00:02+09:00",
+      },
+      {
+        offerId: "re-requested",
+        offeredAt: "2026-08-09T09:00:00+09:00",
+        lastRequestedAt: "2026-08-09T10:00:03+09:00",
+      },
+    ],
+    "ACTIVE",
+    "PENDING",
+  );
+  assert.deepEqual(reRequestedPending.map((offer) => offer.offerId), [
+    "re-requested",
+    "new-offer",
+  ]);
 
   const accepted = sortHospitalOffersNewestFirst(
     [
@@ -245,6 +404,7 @@ test("keeps pending, accepted, and history counts independent of the selected ta
     { offerStatus: "PENDING" },
     { offerStatus: "PENDING" },
     { offerStatus: "ACCEPTED" },
+    { offerStatus: "REJECTED" },
   ];
 
   assert.deepEqual(getHospitalOfferQueueCounts(activeOffers, 4), {
@@ -295,7 +455,7 @@ test("normalizes every withdrawal reason and validates OTHER detail", () => {
   assert.throws(() => createWithdrawalPayload("INVALID", null), /사유를 선택/);
 });
 
-test("maps every 04 through 08 realtime signal to authoritative REST refreshes", () => {
+test("maps current realtime signals to authoritative REST refreshes", () => {
   for (const type of [
     "TRANSPORT_REQUEST_RECEIVED",
     "ETA_UPDATED",
@@ -315,6 +475,7 @@ test("maps every 04 through 08 realtime signal to authoritative REST refreshes",
   assert.equal(shouldRefreshBothOfferLists("connected"), false);
   assert.equal(shouldRefreshBothOfferLists("heartbeat"), false);
   assert.equal(shouldRefreshBothOfferLists("AMBULANCE_LOCATION_UPDATED"), false);
+  assert.equal(shouldRefreshBothOfferLists("UNKNOWN_EVENT"), false);
 
   for (const type of [
     "TRANSPORT_CANCELLED",
@@ -327,6 +488,22 @@ test("maps every 04 through 08 realtime signal to authoritative REST refreshes",
 
   assert.equal(shouldRefreshSelectedOffer("ETA_UPDATED", "offer-1", "offer-1"), true);
   assert.equal(shouldRefreshSelectedOffer("ETA_UPDATED", "offer-2", "offer-1"), false);
+  assert.equal(
+    shouldRefreshSelectedOffer(
+      "TRANSPORT_REQUEST_RECEIVED",
+      "offer-1",
+      "offer-1",
+    ),
+    true,
+  );
+  assert.equal(
+    shouldRefreshSelectedOffer(
+      "TRANSPORT_REQUEST_RECEIVED",
+      "offer-2",
+      "offer-1",
+    ),
+    false,
+  );
   assert.equal(
     shouldRefreshSelectedOffer("DESTINATION_SELECTED", "command-id", "offer-1"),
     true,
@@ -381,4 +558,11 @@ test("maps every 04 through 08 realtime signal to authoritative REST refreshes",
     shouldRefreshSelectedLocation("ETA_UPDATED", "offer-1", "offer-1", "request-1"),
     true,
   );
+});
+
+test("recovers offer reads without inferring another organization's data", () => {
+  assert.equal(shouldRecoverHospitalOfferRead("HOSPITAL_001"), true);
+  assert.equal(shouldRecoverHospitalOfferRead("TRANSPORT_005"), true);
+  assert.equal(shouldRecoverHospitalOfferRead("AUTH_003"), false);
+  assert.equal(shouldRecoverHospitalOfferRead("COMMON_001"), false);
 });

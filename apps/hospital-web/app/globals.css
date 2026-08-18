@@ -916,11 +916,6 @@ textarea:focus {
   color: var(--red-dark);
 }
 
-.offer-status-no_response {
-  background: var(--surface);
-  color: var(--muted);
-}
-
 .offer-status-acceptance_withdrawn {
   background: #fef2f2;
   color: #991b1b;
@@ -951,6 +946,8 @@ textarea:focus {
 
 .destination-badge,
 .handoff-badge,
+.offer-context-badge,
+.re-requested-badge,
 .completed-badge,
 .cancelled-badge {
   display: inline-flex;
@@ -967,6 +964,26 @@ textarea:focus {
 .handoff-badge {
   background: #fffbeb;
   color: #92400e;
+}
+
+.offer-context-pending {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.offer-context-accepted {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.offer-context-handoff {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.re-requested-badge {
+  background: #ede9fe;
+  color: #6d28d9;
 }
 
 .completed-badge {
@@ -1591,6 +1608,25 @@ textarea:focus {
 
 .privacy-restriction-card span,
 .withdrawal-warning {
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.re-request-notice {
+  display: grid;
+  gap: 6px;
+  padding: 16px 17px;
+  border: 1px solid #c4b5fd;
+  border-radius: 13px;
+  background: #f5f3ff;
+  color: #5b21b6;
+}
+
+.re-request-notice strong {
+  font-size: 13px;
+}
+
+.re-request-notice span {
   font-size: 11.5px;
   line-height: 1.55;
 }
@@ -2686,6 +2722,57 @@ input[aria-invalid="true"] {
   background: #f7f8fa;
 }
 
+.destination-change-notice {
+  width: min(1440px, 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 0 auto 14px;
+  padding: 15px 18px;
+  border: 1px solid #bfdbfe;
+  border-radius: 14px;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.destination-change-notice > div {
+  display: grid;
+  gap: 4px;
+}
+
+.destination-change-notice strong {
+  font-size: 13.5px;
+}
+
+.destination-change-notice span {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.destination-change-notice button {
+  flex: none;
+  padding: 7px 11px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.destination-change-warning {
+  border-color: #fdba74;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.destination-change-success {
+  border-color: #86efac;
+  background: #f0fdf4;
+  color: #166534;
+}
+
 .offer-workspace {
   width: min(1440px, 100%);
   min-height: calc(100vh - 136px);
@@ -2831,6 +2918,10 @@ input[aria-invalid="true"] {
   grid-template-columns: repeat(3, 1fr);
   border-bottom: 1px solid var(--line);
   background: #fafbfc;
+}
+
+.dashboard-contract-notice {
+  margin: 20px 30px 0;
 }
 
 .transport-metrics > div {
@@ -3084,6 +3175,14 @@ input[aria-invalid="true"] {
   gap: 9px 11px;
   padding: 14px;
   border-radius: 13px;
+}
+
+.offer-queue .offer-card.offer-card-rejected-minimal {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.offer-queue .offer-card.offer-card-rejected-minimal .offer-card-meta {
+  grid-column: 2;
 }
 
 .offer-queue .offer-card.selected {
@@ -3474,6 +3573,10 @@ input[aria-invalid="true"] {
 
   .transport-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-contract-notice {
+    margin: 16px 18px 0;
   }
 
   .transport-metrics > div {

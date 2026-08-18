@@ -10,10 +10,13 @@ export const WITHDRAWAL_REASONS = [
 ];
 
 const TERMINAL_TRANSPORT_STATUSES = new Set(["COMPLETED", "CANCELLED"]);
+const DETAIL_BLOCKED_OFFER_STATUSES = new Set([
+  "REJECTED",
+  "ACCEPTANCE_WITHDRAWN",
+]);
 
 const TRANSPORT_REQUEST_STATUS_LABELS = Object.freeze({
   SEARCHING: "수용 병원 탐색 중",
-  CANDIDATES_EXHAUSTED: "수용 가능 병원 없음",
   ACCEPTED_AVAILABLE: "목적지 선택 대기",
   EN_ROUTE: "이송 중",
   HANDOFF_REQUESTED: "인계 확인 대기",
@@ -47,12 +50,6 @@ const HOSPITAL_OUTCOME_PRESENTATIONS = Object.freeze({
     title: "수용 거절",
     description: "수용 어려움으로 응답했습니다.",
     tone: "rejected",
-  },
-  NO_RESPONSE: {
-    label: "무응답",
-    title: "무응답 종료",
-    description: "응답 없이 종료되었습니다.",
-    tone: "no_response",
   },
   ACCEPTANCE_WITHDRAWN: {
     label: "수락 철회",
@@ -90,7 +87,6 @@ const OFFER_STATUS_OUTCOME_FALLBACK = Object.freeze({
   PENDING: "AWAITING_RESPONSE",
   ACCEPTED: "ACCEPTED",
   REJECTED: "REJECTED",
-  NO_RESPONSE: "NO_RESPONSE",
   ACCEPTANCE_WITHDRAWN: "ACCEPTANCE_WITHDRAWN",
 });
 
@@ -115,8 +111,15 @@ export function getHospitalOutcomePresentation(hospitalOutcome, offerStatus = nu
 }
 
 /**
- * 전체 환자정보는 구급대원이 이 병원을 최종 목적지로 선택한 동안에만 엽니다.
+ * ACTIVE에 유지되는 제안 상태입니다.
  *
+ * @param {string | null | undefined} offerStatus
+ */
+export function isActiveHospitalOfferStatus(offerStatus) {
+  return offerStatus === "PENDING" || offerStatus === "ACCEPTED";
+}
+
+/**
  * @param {string} offerStatus
  * @param {boolean} currentDestination
  * @param {string | null | undefined} transportRequestStatus
@@ -126,11 +129,174 @@ export function canOpenFullHospitalOffer(
   currentDestination,
   transportRequestStatus = null,
 ) {
+  void currentDestination;
   return (
     !TERMINAL_TRANSPORT_STATUSES.has(transportRequestStatus ?? "") &&
-    offerStatus === "ACCEPTED" &&
-    currentDestination
+    isActiveHospitalOfferStatus(offerStatus)
   );
+}
+
+/**
+ * 인계 요청 전의 PENDING 제안만 수락·거절할 수 있습니다.
+ *
+ * @param {string} offerStatus
+ * @param {string | null | undefined} transportRequestStatus
+ */
+export function canRespondToHospitalOffer(
+  offerStatus,
+  transportRequestStatus = null,
+) {
+  return (
+    isActiveHospitalOfferStatus(offerStatus) &&
+    offerStatus === "PENDING" &&
+    transportRequestStatus !== "HANDOFF_REQUESTED" &&
+    !TERMINAL_TRANSPORT_STATUSES.has(transportRequestStatus ?? "")
+  );
+}
+
+/**
+ * 수락 철회 UI와 실행 방식을 최종 정책에 맞춰 구분합니다.
+ * 목적지 병원은 이동 중에만 긴급 고지를 사용할 수 있습니다.
+ *
+ * @param {boolean} canWithdraw
+ * @param {boolean} currentDestination
+ * @param {string | null | undefined} transportRequestStatus
+ * @returns {"STANDARD" | "EMERGENCY" | null}
+ */
+export function getHospitalWithdrawalMode(
+  canWithdraw,
+  currentDestination,
+  transportRequestStatus = null,
+) {
+  if (!canWithdraw) return null;
+  if (!currentDestination) return "STANDARD";
+  return transportRequestStatus === "EN_ROUTE" ? "EMERGENCY" : null;
+}
+
+/**
+ * 목적지 변경 전후의 병원별 목록을 비교해 명시적인 화면 알림을 만듭니다.
+ *
+ * @param {Array<{ offerId: string; currentDestination: boolean }>} previousOffers
+ * @param {Array<{ offerId: string; currentDestination: boolean }>} nextOffers
+ * @returns {{ tone: "warning" | "success" | "info"; message: string }}
+ */
+export function getDestinationChangeNotice(previousOffers, nextOffers) {
+  const previousDestinationIds = new Set(
+    previousOffers
+      .filter((offer) => offer.currentDestination)
+      .map((offer) => offer.offerId),
+  );
+  const nextDestinationIds = new Set(
+    nextOffers
+      .filter((offer) => offer.currentDestination)
+      .map((offer) => offer.offerId),
+  );
+
+  if (
+    [...previousDestinationIds].some(
+      (offerId) => !nextDestinationIds.has(offerId),
+    )
+  ) {
+    return {
+      tone: "warning",
+      message:
+        "목적지가 다른 병원으로 변경되었습니다. 기존 수락은 유지되며 다시 선택될 수 있습니다.",
+    };
+  }
+  if (
+    [...nextDestinationIds].some(
+      (offerId) => !previousDestinationIds.has(offerId),
+    )
+  ) {
+    return {
+      tone: "success",
+      message: "우리 병원이 새로운 목적지로 선택되었습니다.",
+    };
+  }
+  return {
+    tone: "info",
+    message: "이송 목적지가 변경되었습니다. 최신 병원 상태를 확인해 주세요.",
+  };
+}
+
+/**
+ * 다른 병원이 목적지로 선택된 뒤에도 ACTIVE에 남는 제안인지 판별합니다.
+ * 이 상태에서는 공개 종료 시점까지의 임상정보만 보이고 동적 경로·위치는 숨깁니다.
+ *
+ * @param {string} offerStatus
+ * @param {boolean} currentDestination
+ * @param {string | null | undefined} transportRequestStatus
+ */
+export function isNonDestinationActiveHospitalOffer(
+  offerStatus,
+  currentDestination,
+  transportRequestStatus = null,
+) {
+  return (
+    isActiveHospitalOfferStatus(offerStatus) &&
+    !currentDestination &&
+    (transportRequestStatus === "EN_ROUTE" ||
+      transportRequestStatus === "HANDOFF_REQUESTED")
+  );
+}
+
+/**
+ * offerStatus 하나만으로는 구분할 수 없는 목적지·인계 상태를 화면 문구로 변환합니다.
+ *
+ * @param {string} offerStatus
+ * @param {boolean} currentDestination
+ * @param {string | null | undefined} transportRequestStatus
+ * @returns {{ label: string; description: string; tone: "pending" | "accepted" | "handoff" } | null}
+ */
+export function getActiveHospitalOfferContext(
+  offerStatus,
+  currentDestination,
+  transportRequestStatus = null,
+) {
+  if (!isActiveHospitalOfferStatus(offerStatus)) return null;
+
+  if (transportRequestStatus === "HANDOFF_REQUESTED") {
+    return currentDestination
+      ? {
+          label: "인계 확인 대기",
+          description: "우리 병원에서 환자 인계 확인을 기다리고 있습니다.",
+          tone: "handoff",
+        }
+      : {
+          label: "다른 병원 인계 진행 중",
+          description: "다른 병원에서 인계를 진행 중이므로 추가 응답은 할 수 없습니다.",
+          tone: "handoff",
+        };
+  }
+
+  if (offerStatus === "ACCEPTED" && currentDestination) {
+    return {
+      label: "우리 병원으로 이동 중",
+      description: "구급차가 우리 병원으로 이동 중입니다.",
+      tone: "accepted",
+    };
+  }
+
+  if (transportRequestStatus === "EN_ROUTE" && !currentDestination) {
+    if (offerStatus === "PENDING") {
+      return {
+        label: "다른 병원으로 이동 중 · 응답 가능",
+        description:
+          "다른 병원으로 이동 중이지만 인계 요청 전까지 수락하거나 거절할 수 있습니다.",
+        tone: "pending",
+      };
+    }
+    if (offerStatus === "ACCEPTED") {
+      return {
+        label: "수락 완료 · 다른 병원으로 이동 중",
+        description:
+          "수락 상태는 유지되며 인계 요청 전까지 수락을 철회할 수 있습니다.",
+        tone: "accepted",
+      };
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -144,7 +310,7 @@ export function getHospitalOfferActivityTime(offer, view, activeFilter = "PENDIN
       ? ["processedAt", "completedAt", "cancelledAt", "withdrawnAt", "respondedAt", "offeredAt"]
       : activeFilter === "ACCEPTED"
         ? ["respondedAt", "offeredAt"]
-        : ["offeredAt", "respondedAt"];
+        : ["lastRequestedAt", "offeredAt", "respondedAt"];
 
   for (const key of keys) {
     const value = offer[key];
@@ -178,8 +344,16 @@ export function sortHospitalOffersNewestFirst(offers, view, activeFilter = "PEND
  */
 export function getHospitalOfferQueueCounts(activeOffers, historyTotal = 0) {
   return {
-    pending: activeOffers.filter((offer) => offer.offerStatus === "PENDING").length,
-    accepted: activeOffers.filter((offer) => offer.offerStatus === "ACCEPTED").length,
+    pending: activeOffers.filter(
+      (offer) =>
+        isActiveHospitalOfferStatus(offer.offerStatus) &&
+        offer.offerStatus === "PENDING",
+    ).length,
+    accepted: activeOffers.filter(
+      (offer) =>
+        isActiveHospitalOfferStatus(offer.offerStatus) &&
+        offer.offerStatus === "ACCEPTED",
+    ).length,
     history: Math.max(0, Number(historyTotal) || 0),
   };
 }
@@ -224,7 +398,7 @@ export function createWithdrawalPayload(reason, detail) {
 }
 
 /**
- * 목적지 선택 뒤 임상 상세 접근이 금지되는 최소 이력인지 판별합니다.
+ * 거절·철회·종료 상태처럼 보호 데이터 API 접근이 차단된 제안인지 판별합니다.
  *
  * @param {"ACTIVE" | "HISTORY"} view
  * @param {string} offerStatus
@@ -237,9 +411,20 @@ export function isMinimalHospitalOffer(
 ) {
   return (
     TERMINAL_TRANSPORT_STATUSES.has(transportRequestStatus ?? "") ||
-    offerStatus === "ACCEPTANCE_WITHDRAWN" ||
-    (view === "HISTORY" && offerStatus === "ACCEPTED")
+    DETAIL_BLOCKED_OFFER_STATUSES.has(offerStatus) ||
+    (view === "HISTORY" &&
+      (offerStatus === "ACCEPTED" || !isActiveHospitalOfferStatus(offerStatus)))
   );
+}
+
+/**
+ * 18 계약에서 상태·거절 사유·처리 시각만 노출하는 HISTORY 항목입니다.
+ *
+ * @param {"ACTIVE" | "HISTORY"} view
+ * @param {string} offerStatus
+ */
+export function isRejectedHospitalOfferHistory(view, offerStatus) {
+  return view === "HISTORY" && offerStatus === "REJECTED";
 }
 
 /**
@@ -254,8 +439,17 @@ export function canReadClinicalTimeline(
 ) {
   return (
     !isMinimalHospitalOffer(view, offerStatus, transportRequestStatus) &&
-    (offerStatus === "PENDING" || offerStatus === "ACCEPTED")
+    isActiveHospitalOfferStatus(offerStatus)
   );
+}
+
+/**
+ * 자기 병원 프로필 또는 제안 접근 범위가 사라진 경우 목록을 다시 읽어 복구합니다.
+ *
+ * @param {string | null | undefined} code
+ */
+export function shouldRecoverHospitalOfferRead(code) {
+  return code === "HOSPITAL_001" || code === "TRANSPORT_005";
 }
 
 /**
@@ -345,6 +539,9 @@ export function shouldRefreshSelectedOffer(
   selectedTransportRequestId = null,
 ) {
   if (!selectedOfferId) return false;
+  if (type === "TRANSPORT_REQUEST_RECEIVED") {
+    return aggregateId === selectedOfferId;
+  }
   if (type === "ETA_UPDATED") return aggregateId === selectedOfferId;
   if (REALTIME_CLINICAL_TYPES.has(type)) {
     return aggregateId === selectedTransportRequestId;
