@@ -1956,15 +1956,6 @@ function DashboardOfferDetail({
           <OfferError error={decisionError} />
 
           <div className="dashboard-decision-bar">
-            {canOpenFullHospitalOffer(
-              detail.offerStatus,
-              detail.currentDestination,
-              detail.transportRequestStatus,
-            ) ? (
-              <button className="button button-muted" onClick={onOpenFull} type="button">
-                임상 상세 보기
-              </button>
-            ) : null}
             {canRespondToHospitalOffer(
               detail.offerStatus,
               detail.transportRequestStatus,
