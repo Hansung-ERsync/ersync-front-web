@@ -32,8 +32,8 @@ import {
   canRespondToHospitalOffer,
   clearOfferCommand,
   createWithdrawalPayload,
-  getDestinationChangeNotice,
   getActiveHospitalOfferContext,
+  getHospitalRealtimeNotice,
   getOrCreateOfferCommand,
   getHospitalOfferQueueCounts,
   getHospitalOfferQueueTarget,
@@ -68,7 +68,8 @@ type RealtimeUpdate = {
 
 type DecisionAction = "accept" | "reject" | "withdraw" | "confirm-handoff";
 type OfferSelection = { offer: HospitalOfferListItem; view: OfferView };
-type DestinationChangeNotice = {
+type RealtimeNotice = {
+  title: string;
   tone: "warning" | "success" | "info";
   message: string;
 };
@@ -396,7 +397,7 @@ function OfferCard({
     offer.lastSuccessfulEtaCalculatedAt,
   );
   const outcome = getHospitalOutcomePresentation(
-    offer.hospitalOutcome,
+    view === "ACTIVE" ? null : offer.hospitalOutcome,
     offer.offerStatus,
   );
   const activeContext =
@@ -1290,7 +1291,7 @@ function OfferDetailModal({
   onTimelinePage: (page: number) => void;
 }) {
   const outcome = detail
-    ? getHospitalOutcomePresentation(detail.hospitalOutcome, detail.offerStatus)
+    ? getHospitalOutcomePresentation(null, detail.offerStatus)
     : null;
   const activeContext = detail
     ? getActiveHospitalOfferContext(
@@ -1684,9 +1685,22 @@ function DashboardOfferDetail({
     selectedOffer.hospitalOutcome,
     selectedOffer.offerStatus,
   );
-  const detailOutcome = detail
-    ? getHospitalOutcomePresentation(detail.hospitalOutcome, detail.offerStatus)
+  const selectedResponseStatus = getHospitalOutcomePresentation(
+    null,
+    selectedOffer.offerStatus,
+  );
+  const selectedActiveContext = isActiveHospitalOfferStatus(
+    selectedOffer.offerStatus,
+  )
+    ? getActiveHospitalOfferContext(
+        selectedOffer.offerStatus,
+        selectedOffer.currentDestination,
+        selectedOffer.transportRequestStatus,
+      )
     : null;
+  const selectedReRequestedPending = Boolean(
+    selectedOffer.offerStatus === "PENDING" && selectedOffer.reRequested,
+  );
   const activeContext = detail
     ? getActiveHospitalOfferContext(
         detail.offerStatus,
@@ -1720,6 +1734,36 @@ function DashboardOfferDetail({
 
   return (
     <section className="offer-primary">
+      {isActiveHospitalOfferStatus(selectedOffer.offerStatus) ? (
+        <div
+          aria-atomic="true"
+          aria-live="polite"
+          className="offer-primary-status-summary"
+          role="status"
+        >
+          <div className="patient-status-row">
+            <span
+              className={`offer-status offer-status-${selectedResponseStatus.tone}`}
+            >
+              {selectedResponseStatus.label}
+            </span>
+            {selectedActiveContext ? (
+              <span
+                className={`offer-context-badge offer-context-${selectedActiveContext.tone}`}
+              >
+                {selectedActiveContext.label}
+              </span>
+            ) : null}
+            {selectedReRequestedPending ? (
+              <span className="re-requested-badge">재요청</span>
+            ) : null}
+          </div>
+          <span>
+            {selectedActiveContext?.description ??
+              selectedResponseStatus.description}
+          </span>
+        </div>
+      ) : null}
       {loading ? (
         <div className="offer-primary-loading">환자 정보 조회 중</div>
       ) : null}
@@ -1804,21 +1848,6 @@ function DashboardOfferDetail({
               <strong>{detail.preKtas.level ?? "-"}</strong>
             </div>
             <div className="patient-hero-copy">
-              <div className="patient-status-row">
-                <span className={`offer-status offer-status-${detailOutcome?.tone ?? "pending"}`}>
-                  {detailOutcome?.label}
-                </span>
-                {activeContext ? (
-                  <span
-                    className={`offer-context-badge offer-context-${activeContext.tone}`}
-                  >
-                    {activeContext.label}
-                  </span>
-                ) : null}
-                {reRequestedPending ? (
-                  <span className="re-requested-badge">재요청</span>
-                ) : null}
-              </div>
               <h1>{label(detail.incident.primarySymptom)}</h1>
               <p>
                 {detail.incident.primarySymptomDetail || label(detail.incident.occurrenceType)}
@@ -2008,12 +2037,13 @@ export function HospitalOffers({
   >("");
   const [withdrawalDetail, setWithdrawalDetail] = useState("");
   const [streamState, setStreamState] = useState<StreamState>("CONNECTING");
-  const [destinationNotice, setDestinationNotice] =
-    useState<DestinationChangeNotice | null>(null);
+  const [realtimeNotice, setRealtimeNotice] =
+    useState<RealtimeNotice | null>(null);
   const protectedDataGenerationRef = useRef(0);
   const selectionGenerationRef = useRef(0);
   const locationRequestInFlightRef = useRef(false);
   const realtimeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const seenRealtimeEventIdsRef = useRef<Set<string>>(new Set());
   const activeOffersRef = useRef<HospitalOfferListItem[]>([]);
   const currentRef = useRef({
     view,
@@ -2025,6 +2055,8 @@ export function HospitalOffers({
     selectedTransportRequestId: selectedOffer?.transportRequestId ?? null,
     selectedOfferStatus: selectedOffer?.offerStatus ?? null,
     selectedCurrentDestination: selectedOffer?.currentDestination ?? false,
+    selectedTransportRequestStatus:
+      selectedOffer?.transportRequestStatus ?? null,
   });
   const expiredRef = useRef(onSessionExpired);
 
@@ -2039,6 +2071,8 @@ export function HospitalOffers({
       selectedTransportRequestId: selectedOffer?.transportRequestId ?? null,
       selectedOfferStatus: selectedOffer?.offerStatus ?? null,
       selectedCurrentDestination: selectedOffer?.currentDestination ?? false,
+      selectedTransportRequestStatus:
+        selectedOffer?.transportRequestStatus ?? null,
     };
     expiredRef.current = onSessionExpired;
   }, [
@@ -2048,6 +2082,7 @@ export function HospitalOffers({
     selectedOffer?.offerId,
     selectedOffer?.offerStatus,
     selectedOffer?.transportRequestId,
+    selectedOffer?.transportRequestStatus,
     selectedOfferId,
     selectedOfferView,
     timelinePage,
@@ -2266,22 +2301,44 @@ export function HospitalOffers({
   ) => {
     if (expectedSelectionGeneration !== selectionGenerationRef.current) return;
     const { offer, view: offerView } = selection;
+    const previousSelection = currentRef.current;
+    const stateBoundaryChanged =
+      previousSelection.selectedOfferKey === offer.offerId &&
+      (previousSelection.selectedOfferView !== offerView ||
+        previousSelection.selectedOfferStatus !== offer.offerStatus ||
+        previousSelection.selectedCurrentDestination !==
+          offer.currentDestination ||
+        previousSelection.selectedTransportRequestStatus !==
+          offer.transportRequestStatus);
+    const minimal = isMinimalHospitalOffer(
+      offerView,
+      offer.offerStatus,
+      offer.transportRequestStatus,
+    );
+    if (stateBoundaryChanged) clearProtectedData();
+    currentRef.current = {
+      ...currentRef.current,
+      selectedOfferId: minimal ? null : offer.offerId,
+      selectedOfferKey: offer.offerId,
+      selectedOfferView: offerView,
+      selectedTransportRequestId: offer.transportRequestId,
+      selectedOfferStatus: offer.offerStatus,
+      selectedCurrentDestination: offer.currentDestination,
+      selectedTransportRequestStatus: offer.transportRequestStatus,
+    };
     setSelectedOffer(offer);
     setSelectedOfferView(offerView);
-    if (
-      isMinimalHospitalOffer(
-        offerView,
-        offer.offerStatus,
-        offer.transportRequestStatus,
-      )
-    ) {
+    if (minimal) {
       setSelectedOfferId(null);
-      clearProtectedData();
+      if (!stateBoundaryChanged) clearProtectedData();
       return;
     }
 
     setSelectedOfferId(offer.offerId);
-    const tasks: Promise<void>[] = [loadDetail(offer.offerId, silent)];
+    const resourceLoadSilent = silent && !stateBoundaryChanged;
+    const tasks: Promise<void>[] = [
+      loadDetail(offer.offerId, resourceLoadSilent),
+    ];
     if (
       canReadClinicalTimeline(
         offerView,
@@ -2289,7 +2346,9 @@ export function HospitalOffers({
         offer.transportRequestStatus,
       )
     ) {
-      tasks.push(loadTimeline(offer.offerId, targetTimelinePage, silent));
+      tasks.push(
+        loadTimeline(offer.offerId, targetTimelinePage, resourceLoadSilent),
+      );
     } else {
       setTimeline(null);
       setTimelineError(null);
@@ -2301,7 +2360,7 @@ export function HospitalOffers({
         offer.transportRequestStatus,
       )
     ) {
-      tasks.push(loadLocation(offer.offerId, silent));
+      tasks.push(loadLocation(offer.offerId, resourceLoadSilent));
     } else {
       setLocation(null);
       setLocationError(null);
@@ -2356,14 +2415,12 @@ export function HospitalOffers({
       isTransportLifecycleRealtimeType(update.type)
     ) {
       await refreshVisibleSelection();
-      if (update.type === "DESTINATION_CHANGED") {
-        setDestinationNotice(
-          getDestinationChangeNotice(
-            previousActiveOffers,
-            activeOffersRef.current,
-          ) as DestinationChangeNotice,
-        );
-      }
+      const notice = getHospitalRealtimeNotice(
+        update.type,
+        previousActiveOffers,
+        activeOffersRef.current,
+      );
+      if (notice) setRealtimeNotice(notice as RealtimeNotice);
       return;
     }
 
@@ -2371,6 +2428,12 @@ export function HospitalOffers({
     let refreshedSelection: OfferSelection | null = null;
     if (shouldRefreshBothOfferLists(update.type)) {
       refreshedSelection = await refreshBoth();
+      const notice = getHospitalRealtimeNotice(
+        update.type,
+        previousActiveOffers,
+        activeOffersRef.current,
+      );
+      if (notice) setRealtimeNotice(notice as RealtimeNotice);
       if (selectionGeneration !== selectionGenerationRef.current) return;
       if (beforeRefresh.selectedOfferKey && !refreshedSelection) {
         setSelectedOfferId(null);
@@ -2505,6 +2568,15 @@ export function HospitalOffers({
         } catch {
           return;
         }
+        if (update.eventId) {
+          const seenEventIds = seenRealtimeEventIdsRef.current;
+          if (seenEventIds.has(update.eventId)) return;
+          seenEventIds.add(update.eventId);
+          if (seenEventIds.size > 200) {
+            const oldestEventId = seenEventIds.values().next().value;
+            if (oldestEventId) seenEventIds.delete(oldestEventId);
+          }
+        }
         realtimeQueueRef.current = realtimeQueueRef.current
           .then(() => handleRealtimeUpdate(update))
           .catch(() => undefined);
@@ -2569,6 +2641,7 @@ export function HospitalOffers({
       selectedTransportRequestId: offer.transportRequestId,
       selectedOfferStatus: offer.offerStatus,
       selectedCurrentDestination: offer.currentDestination,
+      selectedTransportRequestStatus: offer.transportRequestStatus,
     };
     clearProtectedData();
     setTimelinePage(0);
@@ -2595,6 +2668,7 @@ export function HospitalOffers({
       selectedTransportRequestId: null,
       selectedOfferStatus: null,
       selectedCurrentDestination: false,
+      selectedTransportRequestStatus: null,
     };
     setSelectedOffer(null);
     setSelectedOfferView(null);
@@ -2945,18 +3019,19 @@ export function HospitalOffers({
 
   return (
     <>
-      {destinationNotice ? (
+      {realtimeNotice ? (
         <div
-          className={`destination-change-notice destination-change-${destinationNotice.tone}`}
+          aria-atomic="true"
+          className={`realtime-notice realtime-notice-${realtimeNotice.tone}`}
           role="alert"
         >
           <div>
-            <strong>목적지 변경 알림</strong>
-            <span>{destinationNotice.message}</span>
+            <strong>{realtimeNotice.title}</strong>
+            <span>{realtimeNotice.message}</span>
           </div>
           <button
-            aria-label="목적지 변경 알림 닫기"
-            onClick={() => setDestinationNotice(null)}
+            aria-label={`${realtimeNotice.title} 닫기`}
+            onClick={() => setRealtimeNotice(null)}
             type="button"
           >
             확인

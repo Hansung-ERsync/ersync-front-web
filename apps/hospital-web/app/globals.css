@@ -2722,7 +2722,7 @@ input[aria-invalid="true"] {
   background: #f7f8fa;
 }
 
-.destination-change-notice {
+.realtime-notice {
   width: min(1440px, 100%);
   display: flex;
   align-items: center;
@@ -2736,21 +2736,21 @@ input[aria-invalid="true"] {
   color: #1e3a8a;
 }
 
-.destination-change-notice > div {
+.realtime-notice > div {
   display: grid;
   gap: 4px;
 }
 
-.destination-change-notice strong {
+.realtime-notice strong {
   font-size: 13.5px;
 }
 
-.destination-change-notice span {
+.realtime-notice span {
   font-size: 12px;
   line-height: 1.5;
 }
 
-.destination-change-notice button {
+.realtime-notice button {
   flex: none;
   padding: 7px 11px;
   border: 1px solid currentColor;
@@ -2761,13 +2761,13 @@ input[aria-invalid="true"] {
   font-weight: 800;
 }
 
-.destination-change-warning {
+.realtime-notice-warning {
   border-color: #fdba74;
   background: #fff7ed;
   color: #9a3412;
 }
 
-.destination-change-success {
+.realtime-notice-success {
   border-color: #86efac;
   background: #f0fdf4;
   color: #166534;
@@ -2793,6 +2793,25 @@ input[aria-invalid="true"] {
 .offer-primary {
   min-width: 0;
   overflow: hidden;
+}
+
+.offer-primary-status-summary {
+  display: grid;
+  gap: 4px;
+  padding: 14px 30px;
+  border-bottom: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
+.offer-primary-status-summary .patient-status-row {
+  margin-bottom: 0;
+}
+
+.offer-primary-status-summary > span {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
 }
 
 .offer-primary-empty {

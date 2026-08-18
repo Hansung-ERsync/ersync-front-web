@@ -176,8 +176,18 @@ export function getHospitalWithdrawalMode(
 /**
  * 목적지 변경 전후의 병원별 목록을 비교해 명시적인 화면 알림을 만듭니다.
  *
- * @param {Array<{ offerId: string; currentDestination: boolean }>} previousOffers
- * @param {Array<{ offerId: string; currentDestination: boolean }>} nextOffers
+ * @param {Array<{
+ *   offerId: string;
+ *   currentDestination: boolean;
+ *   offerStatus?: string | null;
+ *   transportRequestStatus?: string | null;
+ * }>} previousOffers
+ * @param {Array<{
+ *   offerId: string;
+ *   currentDestination: boolean;
+ *   offerStatus?: string | null;
+ *   transportRequestStatus?: string | null;
+ * }>} nextOffers
  * @returns {{ tone: "warning" | "success" | "info"; message: string }}
  */
 export function getDestinationChangeNotice(previousOffers, nextOffers) {
@@ -213,10 +223,156 @@ export function getDestinationChangeNotice(previousOffers, nextOffers) {
       message: "우리 병원이 새로운 목적지로 선택되었습니다.",
     };
   }
+  if (
+    nextOffers.some(
+      (offer) =>
+        isActiveHospitalOfferStatus(offer.offerStatus) &&
+        !offer.currentDestination &&
+        offer.transportRequestStatus === "EN_ROUTE",
+    )
+  ) {
+    return {
+      tone: "info",
+      message:
+        "다른 병원으로 이송이 시작되었습니다. 현재 응답 권한과 허용된 임상정보는 유지됩니다.",
+    };
+  }
   return {
     tone: "info",
     message: "이송 목적지가 변경되었습니다. 최신 병원 상태를 확인해 주세요.",
   };
+}
+
+/**
+ * SSE는 갱신 신호일 뿐이므로, 목록 재조회 전후의 권위 상태를 바탕으로
+ * 병원 사용자에게 필요한 화면 알림만 만듭니다. ETA·위치 갱신처럼 빈번한
+ * 이벤트는 별도 알림을 만들지 않습니다.
+ *
+ * @param {string} type
+ * @param {Array<{
+ *   offerId: string;
+ *   offerStatus?: string | null;
+ *   currentDestination: boolean;
+ *   transportRequestStatus?: string | null;
+ *   reRequested?: boolean;
+ *   lastRequestedAt?: string | null;
+ * }>} previousOffers
+ * @param {Array<{
+ *   offerId: string;
+ *   offerStatus?: string | null;
+ *   currentDestination: boolean;
+ *   transportRequestStatus?: string | null;
+ *   reRequested?: boolean;
+ *   lastRequestedAt?: string | null;
+ * }>} nextOffers
+ * @returns {{ title: string; tone: "warning" | "success" | "info"; message: string } | null}
+ */
+export function getHospitalRealtimeNotice(
+  type,
+  previousOffers = [],
+  nextOffers = [],
+) {
+  if (type === "DESTINATION_SELECTED" || type === "DESTINATION_CHANGED") {
+    return {
+      title:
+        type === "DESTINATION_SELECTED" ? "목적지 선택 알림" : "목적지 변경 알림",
+      ...getDestinationChangeNotice(previousOffers, nextOffers),
+    };
+  }
+
+  if (type === "HOSPITAL_ACCEPTANCE_WITHDRAWN") {
+    const previousDestinationIds = new Set(
+      previousOffers
+        .filter((offer) => offer.currentDestination)
+        .map((offer) => offer.offerId),
+    );
+    const destinationChanged =
+      nextOffers.some(
+        (offer) =>
+          offer.currentDestination && !previousDestinationIds.has(offer.offerId),
+      ) ||
+      previousOffers.some(
+        (offer) =>
+          offer.currentDestination &&
+          !nextOffers.some(
+            (nextOffer) =>
+              nextOffer.offerId === offer.offerId &&
+              nextOffer.currentDestination,
+          ),
+      );
+    if (destinationChanged) {
+      return {
+        title: "목적지 상태 변경",
+        ...getDestinationChangeNotice(previousOffers, nextOffers),
+      };
+    }
+    return {
+      title: "병원 수용 상태 변경",
+      tone: "info",
+      message: "병원 수용 상태가 변경되었습니다. 최신 요청 상태를 확인해 주세요.",
+    };
+  }
+
+  if (type === "TRANSPORT_REQUEST_RECEIVED") {
+    const previousById = new Map(
+      previousOffers.map((offer) => [offer.offerId, offer]),
+    );
+    const reRequested = nextOffers.some((offer) => {
+      if (!offer.reRequested) return false;
+      const previous = previousById.get(offer.offerId);
+      return !previous || previous.lastRequestedAt !== offer.lastRequestedAt;
+    });
+    return reRequested
+      ? {
+          title: "수용 요청 재알림",
+          tone: "warning",
+          message: "기존 환자 수용 요청이 다시 전달되었습니다.",
+        }
+      : {
+          title: "새 수용 요청",
+          tone: "warning",
+          message: "새 환자 수용 요청이 도착했습니다.",
+        };
+  }
+
+  /** @type {Record<string, string>} */
+  const clinicalMessages = {
+    VITAL_SIGNS_ADDED: "환자의 활력징후가 갱신되었습니다.",
+    CONSCIOUSNESS_CHANGED: "환자의 의식 상태가 갱신되었습니다.",
+    PRE_KTAS_CHANGED: "환자의 Pre-KTAS가 갱신되었습니다.",
+    TREATMENT_ADDED: "환자 처치 정보가 추가되었습니다.",
+  };
+  if (clinicalMessages[type]) {
+    return {
+      title: "임상 정보 갱신",
+      tone: "info",
+      message: clinicalMessages[type],
+    };
+  }
+
+  if (type === "TRANSPORT_CANCELLED") {
+    return {
+      title: "이송 취소 알림",
+      tone: "warning",
+      message: "이송이 취소되어 요청이 종료 이력으로 이동했습니다.",
+    };
+  }
+  if (type === "HANDOFF_REQUESTED") {
+    return {
+      title: "환자 인계 확인 요청",
+      tone: "warning",
+      message: "구급대원이 환자 인계 확인을 요청했습니다.",
+    };
+  }
+  if (type === "HANDOFF_COMPLETED") {
+    return {
+      title: "환자 인계 완료",
+      tone: "success",
+      message: "환자 인계가 완료되어 요청이 종료 이력으로 이동했습니다.",
+    };
+  }
+
+  return null;
 }
 
 /**
@@ -277,10 +433,22 @@ export function getActiveHospitalOfferContext(
     };
   }
 
+  if (
+    offerStatus === "ACCEPTED" &&
+    !currentDestination &&
+    transportRequestStatus === "ACCEPTED_AVAILABLE"
+  ) {
+    return {
+      label: "목적지 선택 대기",
+      description: "수용 가능 응답이 전달되어 구급대원의 목적지 선택을 기다리고 있습니다.",
+      tone: "accepted",
+    };
+  }
+
   if (transportRequestStatus === "EN_ROUTE" && !currentDestination) {
     if (offerStatus === "PENDING") {
       return {
-        label: "다른 병원으로 이동 중 · 응답 가능",
+        label: "다른 병원으로 이송 중",
         description:
           "다른 병원으로 이동 중이지만 인계 요청 전까지 수락하거나 거절할 수 있습니다.",
         tone: "pending",
@@ -288,7 +456,7 @@ export function getActiveHospitalOfferContext(
     }
     if (offerStatus === "ACCEPTED") {
       return {
-        label: "수락 완료 · 다른 병원으로 이동 중",
+        label: "다른 병원으로 이송 중",
         description:
           "수락 상태는 유지되며 인계 요청 전까지 수락을 철회할 수 있습니다.",
         tone: "accepted",

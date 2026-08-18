@@ -12,6 +12,7 @@ import {
   createWithdrawalPayload,
   getDestinationChangeNotice,
   getActiveHospitalOfferContext,
+  getHospitalRealtimeNotice,
   getOrCreateOfferCommand,
   getHospitalOfferQueueCounts,
   getHospitalOfferQueueTarget,
@@ -246,7 +247,7 @@ test("presents every active destination state from the 15 contract", () => {
   assert.deepEqual(
     getActiveHospitalOfferContext("PENDING", false, "EN_ROUTE"),
     {
-      label: "다른 병원으로 이동 중 · 응답 가능",
+      label: "다른 병원으로 이송 중",
       description:
         "다른 병원으로 이동 중이지만 인계 요청 전까지 수락하거나 거절할 수 있습니다.",
       tone: "pending",
@@ -255,7 +256,7 @@ test("presents every active destination state from the 15 contract", () => {
   assert.deepEqual(
     getActiveHospitalOfferContext("ACCEPTED", false, "EN_ROUTE"),
     {
-      label: "수락 완료 · 다른 병원으로 이동 중",
+      label: "다른 병원으로 이송 중",
       description:
         "수락 상태는 유지되며 인계 요청 전까지 수락을 철회할 수 있습니다.",
       tone: "accepted",
@@ -264,6 +265,11 @@ test("presents every active destination state from the 15 contract", () => {
   assert.equal(
     getActiveHospitalOfferContext("ACCEPTED", true, "EN_ROUTE")?.label,
     "우리 병원으로 이동 중",
+  );
+  assert.equal(
+    getActiveHospitalOfferContext("ACCEPTED", false, "ACCEPTED_AVAILABLE")
+      ?.label,
+    "목적지 선택 대기",
   );
   assert.equal(
     getActiveHospitalOfferContext("ACCEPTED", true, "HANDOFF_REQUESTED")
@@ -282,6 +288,87 @@ test("presents every active destination state from the 15 contract", () => {
   assert.equal(
     getActiveHospitalOfferContext("REJECTED", false, "HANDOFF_REQUESTED"),
     null,
+  );
+});
+
+test("creates visible notices for meaningful realtime state changes", () => {
+  assert.deepEqual(
+    getHospitalRealtimeNotice(
+      "DESTINATION_SELECTED",
+      [
+        {
+          offerId: "offer-b",
+          offerStatus: "PENDING",
+          currentDestination: false,
+          transportRequestStatus: "SEARCHING",
+        },
+      ],
+      [
+        {
+          offerId: "offer-b",
+          offerStatus: "PENDING",
+          currentDestination: false,
+          transportRequestStatus: "EN_ROUTE",
+        },
+      ],
+    ),
+    {
+      title: "목적지 선택 알림",
+      tone: "info",
+      message:
+        "다른 병원으로 이송이 시작되었습니다. 현재 응답 권한과 허용된 임상정보는 유지됩니다.",
+    },
+  );
+  assert.deepEqual(
+    getHospitalRealtimeNotice(
+      "DESTINATION_CHANGED",
+      [{ offerId: "offer-a", currentDestination: true }],
+      [{ offerId: "offer-a", currentDestination: false }],
+    ),
+    {
+      title: "목적지 변경 알림",
+      tone: "warning",
+      message:
+        "목적지가 다른 병원으로 변경되었습니다. 기존 수락은 유지되며 다시 선택될 수 있습니다.",
+    },
+  );
+  assert.equal(getHospitalRealtimeNotice("ETA_UPDATED", [], []), null);
+  assert.equal(
+    getHospitalRealtimeNotice("AMBULANCE_LOCATION_UPDATED", [], []),
+    null,
+  );
+});
+
+test("distinguishes rerequests and clinical or handoff alerts", () => {
+  assert.equal(
+    getHospitalRealtimeNotice(
+      "TRANSPORT_REQUEST_RECEIVED",
+      [
+        {
+          offerId: "offer-a",
+          currentDestination: false,
+          reRequested: false,
+          lastRequestedAt: "2026-08-18T01:00:00Z",
+        },
+      ],
+      [
+        {
+          offerId: "offer-a",
+          currentDestination: false,
+          reRequested: true,
+          lastRequestedAt: "2026-08-18T01:05:00Z",
+        },
+      ],
+    )?.title,
+    "수용 요청 재알림",
+  );
+  assert.equal(
+    getHospitalRealtimeNotice("VITAL_SIGNS_ADDED", [], [])?.title,
+    "임상 정보 갱신",
+  );
+  assert.equal(
+    getHospitalRealtimeNotice("HANDOFF_REQUESTED", [], [])?.title,
+    "환자 인계 확인 요청",
   );
 });
 
