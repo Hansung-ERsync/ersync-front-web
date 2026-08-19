@@ -22,9 +22,11 @@ import {
 } from "./lib/hospital-signup-contract.js";
 import {
   formatHospitalProfileAddress,
+  shouldReloadProfileAfterUpdateError,
   shouldReloadProfileAfterReceivingStatusError,
 } from "./lib/hospital-profile-contract.js";
 import { HospitalOffers } from "./components/HospitalOffers";
+import { HospitalProfileEditor } from "./components/HospitalProfileEditor";
 
 type AuthView = "login" | "signup";
 type HospitalView = "dashboard" | "account";
@@ -648,20 +650,28 @@ function HospitalApp({
     "UNKNOWN",
   );
   const [profile, setProfile] = useState<HospitalProfile | null>(null);
+  const [profileRevision, setProfileRevision] = useState(0);
   const [profileLoading, setProfileLoading] = useState(true);
   const [changing, setChanging] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [clock, setClock] = useState("");
   const expiredRef = useRef(onSessionExpired);
   const changingRef = useRef(false);
+  const profileEditingRef = useRef(false);
+  const profileSavingRef = useRef(false);
   const profileOperationRef = useRef(0);
 
   useEffect(() => {
     expiredRef.current = onSessionExpired;
   }, [onSessionExpired]);
 
-  const loadProfile = useCallback(async () => {
-    if (changingRef.current) return;
+  const loadProfile = useCallback(async (force = false, resetEditor = true) => {
+    if (
+      changingRef.current ||
+      (!force && profileEditingRef.current) ||
+      profileSavingRef.current
+    ) return;
     const operation = ++profileOperationRef.current;
     setProfileLoading(true);
     setError(null);
@@ -670,6 +680,7 @@ function HospitalApp({
       if (operation === profileOperationRef.current) {
         setProfile(next);
         setReceiving(next.receivingStatus);
+        if (resetEditor) setProfileRevision((current) => current + 1);
       }
     } catch (nextError) {
       if (operation === profileOperationRef.current) setError(nextError);
@@ -684,6 +695,10 @@ function HospitalApp({
     } finally {
       if (operation === profileOperationRef.current) setProfileLoading(false);
     }
+  }, []);
+
+  const setProfileEditing = useCallback((editing: boolean) => {
+    profileEditingRef.current = editing;
   }, []);
 
   useEffect(() => {
@@ -724,7 +739,12 @@ function HospitalApp({
   }, [loadProfile]);
 
   const setStatus = async (status: "ON" | "OFF") => {
-    if (!profile || profileLoading || changingRef.current) return;
+    if (
+      !profile ||
+      profileLoading ||
+      changingRef.current ||
+      profileSavingRef.current
+    ) return;
     let recoverServerState = false;
     const operation = ++profileOperationRef.current;
     changingRef.current = true;
@@ -758,7 +778,52 @@ function HospitalApp({
     } finally {
       changingRef.current = false;
       setChanging(false);
-      if (recoverServerState) void loadProfile();
+      if (recoverServerState) void loadProfile(true, false);
+    }
+  };
+
+  const saveProfile = async (
+    payload: Parameters<typeof hospitalApi.updateProfile>[0],
+  ) => {
+    if (
+      !profile ||
+      profileLoading ||
+      changingRef.current ||
+      profileSavingRef.current
+    ) {
+      throw new Error("병원 프로필을 불러온 뒤 다시 시도해 주세요.");
+    }
+
+    let recoverServerState = false;
+    const operation = ++profileOperationRef.current;
+    profileSavingRef.current = true;
+    setProfileSaving(true);
+    setError(null);
+
+    try {
+      const result = await hospitalApi.updateProfile(payload);
+      if (operation === profileOperationRef.current) {
+        setProfile(result);
+        setReceiving(result.receivingStatus);
+      }
+      return result;
+    } catch (nextError) {
+      recoverServerState = shouldReloadProfileAfterUpdateError(
+        nextError instanceof ApiError ? nextError.status : undefined,
+      );
+      if (
+        nextError instanceof ApiError &&
+        ["AUTH_001", "AUTH_002", "AUTH_005", "USER_002", "COMMON_004"].includes(
+          nextError.code,
+        )
+      ) {
+        expiredRef.current();
+      }
+      throw nextError;
+    } finally {
+      profileSavingRef.current = false;
+      setProfileSaving(false);
+      if (recoverServerState) void loadProfile(true);
     }
   };
 
@@ -784,7 +849,7 @@ function HospitalApp({
           aria-label={live ? "신규 요청 수신 끄기" : "신규 요청 수신 켜기"}
           aria-pressed={live}
           className={`receiving-toggle ${live ? "on" : "off"}`}
-          disabled={changing || profileLoading || !profile}
+          disabled={changing || profileSaving || profileLoading || !profile}
           onClick={() => void setStatus(live ? "OFF" : "ON")}
           type="button"
         >
@@ -871,7 +936,7 @@ function HospitalApp({
             <button
               aria-pressed={live}
               className={`account-receiving-control ${live ? "on" : "off"}`}
-              disabled={changing || profileLoading || !profile}
+              disabled={changing || profileSaving || profileLoading || !profile}
               onClick={() => void setStatus(live ? "OFF" : "ON")}
               type="button"
             >
@@ -892,6 +957,15 @@ function HospitalApp({
                     : "새 이송 요청을 받지 않습니다."}
             </div>
           </div>
+          <HospitalProfileEditor
+            disabled={changing}
+            key={profile ? `${profile.hospitalId}:${profileRevision}` : "loading"}
+            loading={profileLoading}
+            onDirtyChange={setProfileEditing}
+            onSave={saveProfile}
+            profile={profile}
+            saving={profileSaving}
+          />
         </section>
       )}
     </main>

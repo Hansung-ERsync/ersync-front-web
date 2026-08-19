@@ -433,6 +433,17 @@ export const hospitalApi = {
       `/api/geocode?query=${encodeURIComponent(query)}`,
     ),
   profile: () => request<HospitalProfile>("/api/ersync/hospitals/me"),
+  updateProfile: (payload: {
+    address: string;
+    detailAddress: string | null;
+    latitude: number;
+    longitude: number;
+    contact: string;
+  }) =>
+    request<HospitalProfile>("/api/ersync/hospitals/me", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
   setReceivingStatus: (status: "ON" | "OFF") =>
     request<{
       hospitalId: string;

@@ -301,6 +301,90 @@ test("forwards the authenticated hospital profile read", async () => {
   assert.equal((await response.json()).receivingStatus, "ON");
 });
 
+test("forwards the exact authenticated hospital self-profile update", async () => {
+  const update = {
+    address: "서울특별시 성북구 삼선교로 16길",
+    detailAddress: null,
+    latitude: 37.5821,
+    longitude: 127.0105,
+    contact: "02-1234-5678",
+  };
+  let upstreamBody = null;
+
+  const response = await requestApp(
+    "/api/ersync/hospitals/me",
+    {
+      method: "PUT",
+      headers: {
+        accept: "application/json",
+        cookie: hospitalCookies(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(update),
+    },
+    async (input, init = {}) => {
+      const url = new URL(typeof input === "string" ? input : input.url);
+      const headers = new Headers(init.headers);
+      assert.equal(url.pathname, "/api/v1/hospitals/me");
+      assert.equal(init.method, "PUT");
+      assert.equal(headers.get("Authorization"), "Bearer hospital-access");
+      assert.equal(headers.get("Idempotency-Key"), null);
+      upstreamBody = JSON.parse(init.body);
+      return Response.json({
+        accountId: "account-id",
+        loginId: "testhospital",
+        role: "HOSPITAL_STAFF",
+        organizationId: "organization-id",
+        organizationName: "테스트병원",
+        hospitalId: "hospital-id",
+        ...update,
+        receivingStatus: "ON",
+        updatedAt: "2026-08-18T10:00:00Z",
+      });
+    },
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(upstreamBody, update);
+  const body = await response.json();
+  assert.equal(body.receivingStatus, "ON");
+  assert.equal(body.detailAddress, null);
+});
+
+test("clears hospital cookies when the profile relationship is invalid", async () => {
+  const response = await requestApp(
+    "/api/ersync/hospitals/me",
+    {
+      method: "PUT",
+      headers: {
+        accept: "application/json",
+        cookie: hospitalCookies(),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        address: "테스트 주소",
+        detailAddress: null,
+        latitude: 37.5,
+        longitude: 127,
+        contact: "02-0000-0000",
+      }),
+    },
+    async () =>
+      Response.json(
+        {
+          code: "COMMON_004",
+          message: "계정과 병원 정보가 일치하지 않습니다.",
+          fieldErrors: [],
+          traceId: "profile-trace",
+        },
+        { status: 403 },
+      ),
+  );
+
+  assert.equal(response.status, 403);
+  assert.match(response.headers.get("set-cookie") ?? "", /ersync_hospital_access=;/);
+});
+
 test("forwards authenticated 06 clinical timeline and current-destination location reads", async () => {
   const offerId = "00112233-4455-6677-8899-aabbccddeeff";
   const requested = [];

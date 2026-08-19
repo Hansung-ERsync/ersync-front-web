@@ -26,6 +26,7 @@ const offerIdPattern =
 function isAllowed(method: string, path: string) {
   if (publicRoutes.has(`${method} ${path}`)) return true;
   if (method === "GET" && path === "hospitals/me") return true;
+  if (method === "PUT" && path === "hospitals/me") return true;
   if (method === "PUT" && path === "hospitals/me/receiving-status") return true;
   if (method === "GET" && path === "hospitals/me/offers") return true;
   if (
@@ -54,7 +55,11 @@ function isAllowed(method: string, path: string) {
 
 function authErrorResponse(status: number, data: Record<string, unknown>) {
   const response = NextResponse.json(data, { status });
-  if (data.code === "AUTH_005" || data.code === "USER_002") {
+  if (
+    data.code === "AUTH_005" ||
+    data.code === "USER_002" ||
+    data.code === "COMMON_004"
+  ) {
     clearAuthCookies(response);
   }
   return response;
@@ -156,7 +161,8 @@ async function handler(request: NextRequest, context: RouteContext) {
 
   if (
     result.data?.code === "AUTH_005" ||
-    result.data?.code === "USER_002"
+    result.data?.code === "USER_002" ||
+    result.data?.code === "COMMON_004"
   ) {
     clearAuthCookies(response);
   }
