@@ -228,13 +228,9 @@ function formatEta(seconds: number | null | undefined) {
   return `약 ${remainingSeconds}초`;
 }
 
-function cancellationSummary(
-  reason: CancellationReason | null | undefined,
-  detail: string | null | undefined,
-) {
+function cancellationSummary(reason: CancellationReason | null | undefined) {
   if (!reason) return null;
-  const reasonLabel = cancellationReasonLabel[reason];
-  return detail?.trim() ? `${reasonLabel} · ${detail.trim()}` : reasonLabel;
+  return cancellationReasonLabel[reason];
 }
 
 function rejectionSummary(
@@ -415,10 +411,7 @@ function OfferCard({
       offer.currentDestination,
       offer.transportRequestStatus,
     );
-  const cancellation = cancellationSummary(
-    offer.cancellationReason,
-    offer.cancellationDetail,
-  );
+  const cancellation = cancellationSummary(offer.cancellationReason);
   const visualStateClasses = [
     rejectedHistory ? "offer-card-rejected-minimal" : "",
     view === "ACTIVE" && offer.offerStatus === "PENDING"
@@ -1133,10 +1126,7 @@ function MinimalHistoryModal({
                 <div>
                   <dt>취소 사유</dt>
                   <dd>
-                    {cancellationSummary(
-                      offer.cancellationReason,
-                      offer.cancellationDetail,
-                    )}
+                    {cancellationSummary(offer.cancellationReason)}
                   </dd>
                 </div>
               ) : null}
@@ -1809,10 +1799,7 @@ function DashboardOfferDetail({
                   <div>
                     <dt>취소 사유</dt>
                     <dd>
-                      {cancellationSummary(
-                        selectedOffer.cancellationReason,
-                        selectedOffer.cancellationDetail,
-                      )}
+                      {cancellationSummary(selectedOffer.cancellationReason)}
                     </dd>
                   </div>
                 ) : null}
@@ -2919,7 +2906,7 @@ export function HospitalOffers({
       setSelectedOfferView("HISTORY");
       setSelectedOfferId(null);
       clearProtectedData();
-      await refreshBoth();
+      await refreshAfterDecision();
     } catch (nextError) {
       setDecisionError(nextError);
       if (isSessionError(nextError)) expiredRef.current();

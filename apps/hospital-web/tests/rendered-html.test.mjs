@@ -281,13 +281,11 @@ test("forwards the authenticated hospital profile read", async () => {
         "Bearer hospital-access",
       );
       return Response.json({
-        accountId: "account-id",
         loginId: "testhospital",
-        role: "HOSPITAL_STAFF",
-        organizationId: "organization-id",
         organizationName: "테스트병원",
         hospitalId: "hospital-id",
         address: "테스트 주소",
+        detailAddress: null,
         latitude: 37.5,
         longitude: 127.0,
         contact: "02-0000-0000",
@@ -331,10 +329,7 @@ test("forwards the exact authenticated hospital self-profile update", async () =
       assert.equal(headers.get("Idempotency-Key"), null);
       upstreamBody = JSON.parse(init.body);
       return Response.json({
-        accountId: "account-id",
         loginId: "testhospital",
-        role: "HOSPITAL_STAFF",
-        organizationId: "organization-id",
         organizationName: "테스트병원",
         hospitalId: "hospital-id",
         ...update,
@@ -484,11 +479,8 @@ test("forwards authenticated ACTIVE/HISTORY offer reads without exposing tokens"
     requestedViews.push(url.searchParams.get("view"));
     return Response.json({
       items: [],
-      page: 0,
-      size: 20,
       totalElements: 0,
       totalPages: 0,
-      serverNow: "2026-08-04T03:09:10Z",
     });
   };
 
@@ -516,19 +508,39 @@ test("forwards accept, reject, and withdrawal commands with exact keys and bodie
       action: "accept",
       key: "hospital-accept:test-key",
       body: null,
-      response: { offerStatus: "ACCEPTED" },
+      response: {
+        offerId,
+        offerStatus: "ACCEPTED",
+        transportRequestId: "request-id",
+        transportRequestStatus: "SEARCHING",
+        respondedAt: "2026-08-04T03:15:00Z",
+        idempotentReplay: false,
+      },
     },
     {
       action: "reject",
       key: "hospital-reject:test-key",
       body: { reason: "SPECIALIST_UNAVAILABLE", detail: null },
-      response: { offerStatus: "REJECTED" },
+      response: {
+        offerId,
+        offerStatus: "REJECTED",
+        transportRequestId: "request-id",
+        transportRequestStatus: "SEARCHING",
+        respondedAt: "2026-08-04T03:15:00Z",
+        idempotentReplay: false,
+      },
     },
     {
       action: "withdraw-acceptance",
       key: "hospital-withdraw:test-key",
       body: { reason: "BED_SHORTAGE", detail: null },
-      response: { offerStatus: "ACCEPTANCE_WITHDRAWN" },
+      response: {
+        transportRequestStatus: "SEARCHING",
+        reason: "BED_SHORTAGE",
+        detail: null,
+        withdrawnAt: "2026-08-04T03:15:00Z",
+        searchRestarted: true,
+      },
     },
   ];
 
@@ -544,13 +556,7 @@ test("forwards accept, reject, and withdrawal commands with exact keys and bodie
       assert.equal(headers.get("Idempotency-Key"), scenario.key);
       assert.equal(init.method, "POST");
       assert.deepEqual(init.body ? JSON.parse(init.body) : null, scenario.body);
-      return Response.json({
-        offerId,
-        transportRequestId: "request-id",
-        transportRequestStatus: "SEARCHING",
-        idempotentReplay: false,
-        ...scenario.response,
-      });
+      return Response.json(scenario.response);
     };
 
     const response = await requestApp(
@@ -568,7 +574,7 @@ test("forwards accept, reject, and withdrawal commands with exact keys and bodie
       upstreamFetch,
     );
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).offerStatus, scenario.response.offerStatus);
+    assert.deepEqual(await response.json(), scenario.response);
   }
 });
 
@@ -635,16 +641,11 @@ test("retries a lost decision with the same key and body after token rotation", 
       );
     }
     return Response.json({
-      offerId,
-      offerStatus: "ACCEPTANCE_WITHDRAWN",
-      transportRequestId: "request-id",
       transportRequestStatus: "SEARCHING",
-      currentDestinationOfferId: null,
       reason: "OTHER",
       detail: "운영 사유",
       withdrawnAt: "2026-08-04T03:15:00Z",
       searchRestarted: true,
-      idempotentReplay: false,
     });
   };
 

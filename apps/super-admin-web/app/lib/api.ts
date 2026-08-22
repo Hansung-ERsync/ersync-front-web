@@ -24,22 +24,14 @@ export type InvitationStatus =
 
 export type Invitation = {
   invitationCodeId: string;
-  organizationId: string;
   organizationName: string;
-  organizationType: OrganizationType;
   role: "HOSPITAL_STAFF" | "PARAMEDIC";
   status: InvitationStatus;
   expiresAt: string;
-  usedAt: string | null;
-  revokedAt: string | null;
-  createdAt: string;
 };
 
 export type PageResult<T> = {
   items: T[];
-  page: number;
-  size: number;
-  totalElements: number;
   totalPages: number;
 };
 
@@ -124,7 +116,7 @@ export const adminApi = {
     expiryOption: "THREE_DAYS" | "SEVEN_DAYS" | "CUSTOM";
     customExpiresAt?: string | null;
   }) =>
-    request<{ code: string; invitation: Invitation }>(
+    request<{ code: string }>(
       "/api/ersync/admin/invitation-codes",
       { method: "POST", body: JSON.stringify(payload) },
     ),

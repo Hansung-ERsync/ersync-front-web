@@ -137,6 +137,106 @@ test("refreshes an absent administrator access cookie before proxying", async ()
   assert.match(setCookie, /ersync_admin_refresh=rotated-admin-refresh/);
 });
 
+test("forwards the minimized organization and invitation DTOs", async () => {
+  const invitationCodeId = "00112233-4455-6677-8899-aabbccddeeff";
+  const scenarios = [
+    {
+      path: "/api/ersync/admin/organizations?page=0&size=10",
+      upstreamPath: "/api/v1/admin/organizations",
+      upstreamSearch: "?page=0&size=10",
+      response: {
+        items: [
+          {
+            organizationId: "11223344-5566-7788-99aa-bbccddeeff00",
+            name: "테스트병원",
+            type: "HOSPITAL",
+            createdAt: "2026-08-20T10:00:00Z",
+          },
+        ],
+        totalPages: 1,
+      },
+    },
+    {
+      path: "/api/ersync/admin/invitation-codes",
+      upstreamPath: "/api/v1/admin/invitation-codes",
+      upstreamSearch: "",
+      init: {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          organizationId: "11223344-5566-7788-99aa-bbccddeeff00",
+          role: "HOSPITAL_STAFF",
+          expiryOption: "THREE_DAYS",
+          customExpiresAt: null,
+        }),
+      },
+      response: { code: "A1b2_C3d" },
+    },
+    {
+      path: "/api/ersync/admin/invitation-codes?page=0&size=10",
+      upstreamPath: "/api/v1/admin/invitation-codes",
+      upstreamSearch: "?page=0&size=10",
+      response: {
+        items: [
+          {
+            invitationCodeId,
+            organizationName: "테스트병원",
+            role: "HOSPITAL_STAFF",
+            status: "AVAILABLE",
+            expiresAt: "2026-08-23T10:00:00Z",
+          },
+        ],
+        totalPages: 1,
+      },
+    },
+    {
+      path: `/api/ersync/admin/invitation-codes/${invitationCodeId}/revoke`,
+      upstreamPath: `/api/v1/admin/invitation-codes/${invitationCodeId}/revoke`,
+      upstreamSearch: "",
+      init: {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({}),
+      },
+      response: {
+        invitationCodeId,
+        organizationName: "테스트병원",
+        role: "HOSPITAL_STAFF",
+        status: "REVOKED",
+        expiresAt: "2026-08-23T10:00:00Z",
+      },
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const response = await requestApp(
+      scenario.path,
+      {
+        ...scenario.init,
+        headers: {
+          accept: "application/json",
+          cookie: adminCookies(),
+          ...scenario.init?.headers,
+        },
+      },
+      async (input, init = {}) => {
+        const url = new URL(typeof input === "string" ? input : input.url);
+        assert.equal(url.pathname, scenario.upstreamPath);
+        assert.equal(url.search, scenario.upstreamSearch);
+        assert.equal(
+          new Headers(init.headers).get("authorization"),
+          "Bearer admin-access",
+        );
+        if (scenario.init?.body) assert.equal(init.body, scenario.init.body);
+        return Response.json(scenario.response);
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), scenario.response);
+  }
+});
+
 test("does not expose hospital offer, withdrawal, or realtime routes", async () => {
   const profile = await requestApp("/api/ersync/hospitals/me", {
     headers: { accept: "application/json" },

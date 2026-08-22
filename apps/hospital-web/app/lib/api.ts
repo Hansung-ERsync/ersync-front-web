@@ -55,11 +55,8 @@ export type CancellationReason =
 
 export type PageResult<T> = {
   items: T[];
-  page: number;
-  size: number;
   totalElements: number;
   totalPages: number;
-  serverNow: string;
 };
 
 export type HospitalOfferListItem = {
@@ -72,7 +69,6 @@ export type HospitalOfferListItem = {
   processedAt: string | null;
   currentDestination: boolean;
   canWithdraw: boolean;
-  canConfirmHandoff?: boolean;
   ageStatus?: "EXACT" | "ESTIMATED" | "UNKNOWN" | null;
   ageYears?: number | null;
   sex?: "MALE" | "FEMALE" | "UNKNOWN" | null;
@@ -103,7 +99,6 @@ export type HospitalOfferListItem = {
   completedAt?: string | null;
   cancelledAt?: string | null;
   cancellationReason?: CancellationReason | null;
-  cancellationDetail?: string | null;
 };
 
 export type VitalSignMeasurement = {
@@ -136,6 +131,19 @@ export type ConsciousnessSnapshot = {
   observedAt: string;
 };
 
+export type SupplementalAssessment = {
+  assessedAt: string;
+  enteredAt: string;
+  serverReceivedAt: string;
+  glucoseMgDl: number | null;
+  leftPupil: string | null;
+  rightPupil: string | null;
+  medicalHistory: string | null;
+  allergies: string | null;
+  medications: string | null;
+  isolationConcern: boolean | null;
+};
+
 export type VitalSignsSnapshot = {
   measuredAt: string;
   measurements: VitalSignMeasurement[];
@@ -158,12 +166,9 @@ export type TreatmentRecord = {
 
 export type HospitalOfferDetail = {
   offerId: string;
-  transportRequestId: string;
   dispatchAttemptNumber: number;
   transportRequestStatus: TransportRequestStatus;
   offerStatus: OfferStatus;
-  hospitalOutcome: HospitalOutcome;
-  processedAt: string | null;
   currentDestination: boolean;
   canWithdraw: boolean;
   canConfirmHandoff: boolean;
@@ -182,10 +187,18 @@ export type HospitalOfferDetail = {
     onsetTimeStatus: "EXACT" | "ESTIMATED" | "UNKNOWN";
     onsetAt: string | null;
   };
-  preKtas: PreKtasSnapshot;
-  consciousness: ConsciousnessSnapshot;
+  preKtas: {
+    classificationStatus: "COMPLETED" | "EMERGENCY_UNFINISHED";
+    level: number | null;
+    exceptionReason: string | null;
+  };
+  consciousness: {
+    avpu: "A" | "V" | "P" | "U" | "UNASSESSABLE";
+    unassessableReason: string | null;
+  };
   vitalSigns: VitalSignsSnapshot;
   treatments: TreatmentRecord[];
+  supplementalAssessment: SupplementalAssessment | null;
   requester: {
     organizationName: string;
     callbackContact: string;
@@ -195,14 +208,12 @@ export type HospitalOfferDetail = {
     status: RouteEstimateStatus | null;
     routeDistanceMeters: number | null;
     etaSeconds: number | null;
-    calculatedAt: string | null;
     lastSuccessfulRouteDistanceMeters: number | null;
     lastSuccessfulEtaSeconds: number | null;
     lastSuccessfulCalculatedAt: string | null;
   };
   timing: {
     requestReceivedAt: string;
-    offeredAt: string;
     reRequested: boolean;
     lastRequestedAt: string;
     lastClinicalUpdateAt: string;
@@ -214,10 +225,6 @@ export type HospitalOfferDetail = {
   withdrawnAt: string | null;
   respondedAt: string | null;
   handoffRequestedAt: string | null;
-  completedAt: string | null;
-  cancelledAt: string | null;
-  cancellationReason: CancellationReason | null;
-  cancellationDetail: string | null;
   serverNow: string;
 };
 
@@ -286,16 +293,11 @@ export type HospitalOfferDecision = {
 };
 
 export type HospitalAcceptanceWithdrawal = {
-  offerId: string;
-  offerStatus: "ACCEPTANCE_WITHDRAWN";
-  transportRequestId: string;
   transportRequestStatus: TransportRequestStatus;
-  currentDestinationOfferId: string | null;
   reason: WithdrawalReason;
   detail: string | null;
   withdrawnAt: string;
   searchRestarted: boolean;
-  idempotentReplay: boolean;
 };
 
 export type HospitalHandoffConfirmation = {
@@ -307,10 +309,7 @@ export type HospitalHandoffConfirmation = {
 };
 
 export type HospitalProfile = {
-  accountId: string;
   loginId: string;
-  role: "HOSPITAL_STAFF";
-  organizationId: string;
   organizationName: string;
   hospitalId: string;
   address: string;
@@ -446,8 +445,6 @@ export const hospitalApi = {
     }),
   setReceivingStatus: (status: "ON" | "OFF") =>
     request<{
-      hospitalId: string;
-      organizationId: string;
       status: "ON" | "OFF";
       updatedAt: string;
     }>("/api/ersync/hospitals/me/receiving-status", {
